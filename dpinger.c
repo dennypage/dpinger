@@ -322,7 +322,7 @@ recv_thread(void *arg)
 	// This should never happen
 	if (packet_len < sizeof(icmphdr_t))
 	{
-	    logger("recieved packet too small for ICMP header\n");
+	    logger("received packet too small for ICMP header\n");
 	    continue;
 	}
 
@@ -482,12 +482,12 @@ usage(
     fprintf(stderr, "    -R rewind output file between reports\n");
     fprintf(stderr, "    -S log warnings via syslog\n");
     fprintf(stderr, "    -s interval between echo requests (default 250m)\n");
-    fprintf(stderr, "    -r interval between reports (detault 1s)\n");
+    fprintf(stderr, "    -r interval between reports (default 1s)\n");
     fprintf(stderr, "    -l interval before packets are treated as lost (default 2x send interval)\n");
     fprintf(stderr, "    -t time period over which results are averaged (default 10s)\n\n");
-    fprintf(stderr, "    time intervals/periods can be expressed with a suffix of 's' (seconds) or 'm' (millseonds)\n");
-    fprintf(stderr, "    if no suffix is specificied, millseconds is the default\n\n");
-    fprintf(stderr, "    ip addreess can be in either IPv4 or IPv6 format\n\n");
+    fprintf(stderr, "    time intervals/periods can be expressed with a suffix of 's' (seconds) or 'm' (milliseconds)\n");
+    fprintf(stderr, "    if no suffix is specified, milliseconds is the default\n\n");
+    fprintf(stderr, "    IP address can be in either IPv4 or IPv6 format\n\n");
 }
 
 
@@ -513,7 +513,7 @@ fatal(
 
 
 //
-// Parse command line arguents
+// Parse command line arguments
 //
 void
 parse_args(
@@ -700,7 +700,7 @@ main(
     // Set my identifier
     identifier = htons(getpid());
 
-    // Set the limit for sequence number to ensure a mutiple of array size
+    // Set the limit for sequence number to ensure a multiple of array size
     sequence_limit = array_size;
     while ((sequence_limit & 0x8000) == 0)
     {
