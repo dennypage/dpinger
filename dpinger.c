@@ -38,6 +38,7 @@
 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/icmp6.h>
 #include <arpa/inet.h>
@@ -298,17 +299,17 @@ recv_thread(void *arg)
 
 	if (af_family == AF_INET)
 	{
-	    struct iphdr *	ip;
+	    struct ip *		ip;
 	    size_t		ip_len;
 
 	    // With IPv4, we get the entire IP packet
-            if (packet_len < sizeof(struct iphdr))
+            if (packet_len < sizeof(struct ip))
 	    {
 	        logger("received packet too small for IP header\n");
 	        continue;
 	    }
-            ip = (struct iphdr *) packet;
-            ip_len = ip->ihl << 2;
+            ip = (struct ip *) packet;
+            ip_len = ip->ip_hl << 2;
 
             icmp = (icmphdr_t *) (packet + ip_len);
 	    packet_len -= ip_len;
