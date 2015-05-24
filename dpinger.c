@@ -38,6 +38,7 @@
 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/icmp6.h>
 #include <arpa/inet.h>
@@ -47,20 +48,20 @@
 
 
 // Flags
-unsigned int flag_rewind	= 0;
-unsigned int flag_syslog	= 0;
+static unsigned int flag_rewind		= 0;
+static unsigned int flag_syslog		= 0;
 
 // Time period over which we are averaging results in ms
-unsigned long time_period	= 10000;
+static unsigned long time_period	= 10000;
 
 // Interval between sends in ms
-unsigned long send_interval	= 250;
+static unsigned long send_interval	= 250;
 
 // Interval between reports in ms
-unsigned long report_interval	= 1000;
+static unsigned long report_interval	= 1000;
 
 // Interval before a sequence is initially treated as lost in us
-unsigned long loss_interval	= 0;
+static unsigned long loss_interval	= 0;
 
 
 // Main ping status array
@@ -77,24 +78,24 @@ typedef struct
     unsigned long		latency;
 } ping_entry_t;
 
-ping_entry_t *			array;
-unsigned int			array_size;
-unsigned int			next_slot = 0;
+static ping_entry_t *		array;
+static unsigned int		array_size;
+static unsigned int		next_slot = 0;
 
 
 // Sockets used to send and receive
-int				send_sock;
-int				recv_sock;
+static int			send_sock;
+static int			recv_sock;
 
 // IPv4 / IPv6 parameters
-uint16_t			af_family = AF_INET;			// IPv6: AF_INET6
-uint16_t			echo_request_type = ICMP_ECHO;		// IPv6: ICMP6_ECHO_REQUEST
-uint16_t			echo_reply_type = ICMP_ECHOREPLY;	// IPv6: ICMP6_ECHO_REPLY
-int				ip_proto = IPPROTO_ICMP;		// IPv6: IPPROTO_ICMPV6
+static uint16_t			af_family = AF_INET;			// IPv6: AF_INET6
+static uint16_t			echo_request_type = ICMP_ECHO;		// IPv6: ICMP6_ECHO_REQUEST
+static uint16_t			echo_reply_type = ICMP_ECHOREPLY;	// IPv6: ICMP6_ECHO_REPLY
+static int			ip_proto = IPPROTO_ICMP;		// IPv6: IPPROTO_ICMPV6
 
 // Destination address
-struct sockaddr_storage		dest_addr = { 0 };
-socklen_t			dest_addr_len;
+static struct sockaddr_storage	dest_addr;
+static socklen_t		dest_addr_len;
 
 // ICMP echo request/reply header
 //
@@ -110,18 +111,18 @@ typedef struct
 } icmphdr_t;
 
 // Echo request header for sendto
-icmphdr_t			echo_request;
+static icmphdr_t		echo_request;
 
 // Identifier and Sequence information
-uint16_t			identifier;
-uint16_t			next_sequence = 0;
-uint16_t			sequence_limit;
+static uint16_t			identifier;
+static uint16_t			next_sequence = 0;
+static uint16_t			sequence_limit;
 
 
 //
 // Log for abnormal events
 //
-void
+static void
 logger(
     const char *		format,
     ...)
@@ -144,7 +145,7 @@ logger(
 //
 // Compute checksum for ICMP
 //
-uint16_t
+static uint16_t
 cksum(
     const uint16_t *		 p,
     int len)
@@ -172,7 +173,7 @@ cksum(
 //
 // sqrt function for standard deviation
 //
-unsigned long
+static unsigned long
 llsqrt(
     unsigned long long		x)
 {
@@ -198,7 +199,7 @@ llsqrt(
 //
 // Compute delta between old time and new time in microseconds
 //
-unsigned long
+static unsigned long
 ts_elapsed(
     const struct timespec *	old,
     const struct timespec *	new)
@@ -224,7 +225,7 @@ ts_elapsed(
 //
 // Send thead
 //
-void *
+static void *
 send_thread(void *arg)
 {
     struct timespec		sleeptime;
@@ -268,13 +269,15 @@ send_thread(void *arg)
             logger("nanosleep error in send thread: %d", errno);
         }
     }
+
+    return (arg);
 }
 
 
 //
 // Receive thread
 //
-void *
+static void *
 recv_thread(void *arg)
 {
     char			packet[1024];
@@ -298,25 +301,25 @@ recv_thread(void *arg)
 
 	if (af_family == AF_INET)
 	{
-	    struct iphdr *	ip;
+	    struct ip *		ip;
 	    size_t		ip_len;
 
 	    // With IPv4, we get the entire IP packet
-            if (packet_len < sizeof(struct iphdr))
+            if (packet_len < sizeof(struct ip))
 	    {
 	        logger("received packet too small for IP header\n");
 	        continue;
 	    }
-            ip = (struct iphdr *) packet;
-            ip_len = ip->ihl << 2;
+            ip = (void *) packet;
+            ip_len = ip->ip_hl << 2;
 
-            icmp = (icmphdr_t *) (packet + ip_len);
+            icmp = (void *) (packet + ip_len);
 	    packet_len -= ip_len;
 	}
 	else
 	{
 	    // With IPv6, we just get the ICMP payload
-            icmp = (icmphdr_t *) (packet);
+            icmp = (void *) (packet);
 	}
 
 	// This should never happen
@@ -342,13 +345,15 @@ recv_thread(void *arg)
 	array[array_slot].latency = ts_elapsed(&array[array_slot].time_sent, &now);
 	array[array_slot].status = PACKET_STATUS_RECEIVED;
     }
+
+    return (arg);
 }
 
 
 //
 // Report thread
 //
-void *
+static void *
 report_thread(void *arg)
 {
     struct timespec		now;
@@ -430,6 +435,8 @@ report_thread(void *arg)
             rewind(stdout);
 	}
     }
+
+    return (arg);
 }
 
 
@@ -437,7 +444,7 @@ report_thread(void *arg)
 //
 // Decode a time value
 //
-unsigned long
+static unsigned long
 get_interval_arg(
     const char *		arg)
 {
@@ -472,7 +479,7 @@ get_interval_arg(
 //
 // Output usage
 //
-void
+static void
 usage(
     const char *		progname)
 {
@@ -494,7 +501,7 @@ usage(
 //
 // Fatal error
 //
-void
+static void
 fatal(
     const char *		format,
     ...)
@@ -515,7 +522,7 @@ fatal(
 //
 // Parse command line arguments
 //
-void
+static void
 parse_args(
     int				argc,
     char * const		argv[])

@@ -1,5 +1,10 @@
+PROG=	dpinger
+MAN=
 
-#CFLAGS=-Wall -Wextra -pthread -g
-CFLAGS=-Wall -pthread -g
+BINDIR=	${PREFIX}/bin
+WARNS=	6
 
-all: dpinger
+CFLAGS=	-g
+LDADD=	-lpthread
+
+.include <bsd.prog.mk>
