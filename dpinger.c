@@ -69,9 +69,9 @@ typedef struct
 {
     enum
     {
-        PACKET_STATUS_EMPTY	= 0,
-        PACKET_STATUS_SENT	= 1,
-        PACKET_STATUS_RECEIVED	= 2
+	PACKET_STATUS_EMPTY	= 0,
+	PACKET_STATUS_SENT	= 1,
+	PACKET_STATUS_RECEIVED	= 2
     } status;
 
     struct timespec		time_sent;
@@ -96,6 +96,10 @@ static int			ip_proto = IPPROTO_ICMP;		// IPv6: IPPROTO_ICMPV6
 // Destination address
 static struct sockaddr_storage	dest_addr;
 static socklen_t		dest_addr_len;
+
+// Source (bind) address
+static struct sockaddr_storage	bind_addr;
+static socklen_t		bind_addr_len = 0;
 
 // ICMP echo request/reply header
 //
@@ -132,11 +136,11 @@ logger(
     va_start(args, format);
     if (flag_syslog)
     {
-        vsyslog(LOG_WARNING, format, args);
+	vsyslog(LOG_WARNING, format, args);
     }
     else
     {
-        vfprintf(stderr, format, args);
+	vfprintf(stderr, format, args);
     }
     va_end(args);
 }
@@ -160,7 +164,7 @@ cksum(
 
     if (len == 1)
     {
-        sum += (uint16_t) *((uint8_t *) p);
+	sum += (uint16_t) *((uint8_t *) p);
     }
 
     sum = (sum >> 16) + (sum & 0xFFFF);
@@ -183,13 +187,13 @@ llsqrt(
     s = x;
     if (s)
     {
-        prev = ~((unsigned long long) 1 << 63);
+	prev = ~((unsigned long long) 1 << 63);
 
-        while (s < prev)
-        {
-            prev = s;
-            s = (s + (x / s)) / 2;
-        }
+	while (s < prev)
+	{
+	    prev = s;
+	    s = (s + (x / s)) / 2;
+	}
     }
 
     return s;
@@ -245,31 +249,32 @@ send_thread(void *arg)
     while (1)
     {
 	// Set sequence number and checksum
-        echo_request.sequence = htons(next_sequence);
-        echo_request.cksum = 0;
-        echo_request.cksum = cksum((uint16_t *) &echo_request, sizeof(icmphdr_t));
+	echo_request.sequence = htons(next_sequence);
+	echo_request.cksum = 0;
+	echo_request.cksum = cksum((uint16_t *) &echo_request, sizeof(icmphdr_t));
 
 	array[next_slot].status = PACKET_STATUS_EMPTY;
 	sched_yield();
 	clock_gettime(CLOCK_MONOTONIC, &array[next_slot].time_sent);
 	array[next_slot].status = PACKET_STATUS_SENT;
 
-        r = sendto(send_sock, &echo_request, sizeof(icmphdr_t), 0, (struct sockaddr *) &dest_addr, dest_addr_len); 
-        if (r == -1)
-        {
-            logger("sendto error: %n\n", errno);
-        }
+	r = sendto(send_sock, &echo_request, sizeof(icmphdr_t), 0, (struct sockaddr *) &dest_addr, dest_addr_len); 
+	if (r == -1)
+	{
+	    logger("sendto error: %n\n", errno);
+	}
 
 	next_slot = (next_slot + 1) % array_size;
 	next_sequence = (next_sequence + 1) % sequence_limit;
 
 	r = nanosleep(&sleeptime, NULL);
-        if (r == -1)
-        {
-            logger("nanosleep error in send thread: %d", errno);
-        }
+	if (r == -1)
+	{
+	    logger("nanosleep error in send thread: %d", errno);
+	}
     }
 
+    // notreached
     return (arg);
 }
 
@@ -290,13 +295,13 @@ recv_thread(void *arg)
 
     while (1)
     {
-        src_addr_len = sizeof(src_addr);
-        packet_len = recvfrom(recv_sock, &packet, sizeof(packet), 0, (struct sockaddr *) &src_addr, &src_addr_len);
-        if (packet_len == (unsigned int) -1)
-        {
-            logger("recvfrom error: %d\n", errno);
+	src_addr_len = sizeof(src_addr);
+	packet_len = recvfrom(recv_sock, &packet, sizeof(packet), 0, (struct sockaddr *) &src_addr, &src_addr_len);
+	if (packet_len == (unsigned int) -1)
+	{
+	    logger("recvfrom error: %d\n", errno);
 	    continue;
-        }
+	}
 	clock_gettime(CLOCK_MONOTONIC, &now);
 
 	if (af_family == AF_INET)
@@ -305,21 +310,21 @@ recv_thread(void *arg)
 	    size_t		ip_len;
 
 	    // With IPv4, we get the entire IP packet
-            if (packet_len < sizeof(struct ip))
+	    if (packet_len < sizeof(struct ip))
 	    {
-	        logger("received packet too small for IP header\n");
-	        continue;
+		logger("received packet too small for IP header\n");
+		continue;
 	    }
-            ip = (void *) packet;
-            ip_len = ip->ip_hl << 2;
+	    ip = (void *) packet;
+	    ip_len = ip->ip_hl << 2;
 
-            icmp = (void *) (packet + ip_len);
+	    icmp = (void *) (packet + ip_len);
 	    packet_len -= ip_len;
 	}
 	else
 	{
 	    // With IPv6, we just get the ICMP payload
-            icmp = (void *) (packet);
+	    icmp = (void *) (packet);
 	}
 
 	// This should never happen
@@ -330,7 +335,7 @@ recv_thread(void *arg)
 	}
 
 	// If it's not an echo reply for us, skip the packet
-        if (icmp->type != echo_reply_type || icmp->id != identifier)
+	if (icmp->type != echo_reply_type || icmp->id != identifier)
 	{
 	    continue;
 	}
@@ -346,6 +351,7 @@ recv_thread(void *arg)
 	array[array_slot].status = PACKET_STATUS_RECEIVED;
     }
 
+    // notreached
     return (arg);
 }
 
@@ -381,26 +387,26 @@ report_thread(void *arg)
 	total_latency2		= 0;
 
 	r = nanosleep(&sleeptime, NULL);
-        if (r == -1)
-        {
-            logger("nanosleep error in report thread: %d\n", errno);
-        }
+	if (r == -1)
+	{
+	    logger("nanosleep error in report thread: %d\n", errno);
+	}
 
 	clock_gettime(CLOCK_MONOTONIC, &now);
 
-        slot = next_slot;
+	slot = next_slot;
 	for (i = 0; i < array_size; i++)
 	{
 	    if (array[slot].status == PACKET_STATUS_RECEIVED)
 	    {
-	        packets_received++;
+		packets_received++;
 		total_latency += array[slot].latency;
 		total_latency2 += array[slot].latency * array[slot].latency;
 	    }
 	    else if (array[slot].status == PACKET_STATUS_SENT &&
 	    	     ts_elapsed(&array[slot].time_sent, &now) > loss_interval)
 	    {
-	            packets_lost++;
+		    packets_lost++;
 	    }
 
 	    slot = (slot + 1) % array_size;
@@ -432,10 +438,11 @@ report_thread(void *arg)
 	if (flag_rewind)
 	{
 	    ftruncate(fileno(stdout), ftell(stdout));
-            rewind(stdout);
+	    rewind(stdout);
 	}
     }
 
+    // notreached
     return (arg);
 }
 
@@ -467,7 +474,7 @@ get_interval_arg(
 	}
 
 	// Garbage in the number
-        if (*suffix != 0)
+	if (*suffix != 0)
 	{
 	    value = 0;
 	}
@@ -484,7 +491,7 @@ usage(
     const char *		progname)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-R] [-S] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] ip_address\n\n", progname);
+    fprintf(stderr, "  %s [-R] [-S] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] dest_addr [bind_addr]\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
     fprintf(stderr, "    -S log warnings via syslog\n");
@@ -494,7 +501,7 @@ usage(
     fprintf(stderr, "    -t time period over which results are averaged (default 10s)\n\n");
     fprintf(stderr, "    time intervals/periods can be expressed with a suffix of 's' (seconds) or 'm' (milliseconds)\n");
     fprintf(stderr, "    if no suffix is specified, milliseconds is the default\n\n");
-    fprintf(stderr, "    IP address can be in either IPv4 or IPv6 format\n\n");
+    fprintf(stderr, "    IP addresses can be in either IPv4 or IPv6 format\n\n");
 }
 
 
@@ -508,7 +515,7 @@ fatal(
 {
     if (format)
     {
-        va_list args;
+	va_list args;
 
 	va_start(args, format);
 	vfprintf(stderr, format, args);
@@ -529,12 +536,14 @@ parse_args(
 {
     struct in_addr		addr;
     struct in6_addr		addr6;
+    const char *		dest_arg;
+    const char *		bind_arg = NULL;
     int				opt;
     int				r;
 
     while((opt = getopt(argc, argv, "RSs:r:l:t:")) != -1)
     {
-        switch (opt)
+	switch (opt)
 	{
 	case 'R':
 	    flag_rewind = 1;
@@ -548,7 +557,7 @@ parse_args(
 	    send_interval = get_interval_arg(optarg);
 	    if (send_interval == 0)
 	    {
-	        fatal("invalid send interval %s\n", optarg);
+		fatal("invalid send interval %s\n", optarg);
 	    }
 	    break;
 
@@ -556,7 +565,7 @@ parse_args(
 	    report_interval = get_interval_arg(optarg);
 	    if (report_interval == 0)
 	    {
-	        fatal("invalid report interval %s\n", optarg);
+		fatal("invalid report interval %s\n", optarg);
 	    }
 	    break;
 
@@ -564,7 +573,7 @@ parse_args(
 	    loss_interval = get_interval_arg(optarg);
 	    if (loss_interval == 0)
 	    {
-	        fatal("invalid loss interval %s\n", optarg);
+		fatal("invalid loss interval %s\n", optarg);
 	    }
 	    break;
 
@@ -572,7 +581,7 @@ parse_args(
 	    time_period = get_interval_arg(optarg);
 	    if (time_period == 0)
 	    {
-	        fatal("invalid averaging time period %s\n", optarg);
+		fatal("invalid averaging time period %s\n", optarg);
 	    }
 	    break;
 
@@ -582,52 +591,86 @@ parse_args(
 	}
     }
 
-    if (optind != argc - 1)
+    // Ensure we have the correct number of parameters
+    if (argc < optind + 1 || argc > optind + 2)
     {
 	usage(argv[0]);
 	fatal(NULL);
+    }
+    dest_arg = argv[optind++];
+    if (optind <= argc)
+    {
+	bind_arg = argv[optind];
     }
 
     // Ensure we have something to average over
     if (time_period < send_interval)
     {
-        fatal("time period cannot be less than send interval\n");
+	fatal("time period cannot be less than send interval\n");
     }
 
     // Ensure we don't have sequence space issues. This really should only be hit by
     // complete accident. Even a ratio of 16384:1 would be excessive.
     if (time_period / send_interval > 65536)
     {
-        fatal("ratio of time period to send interval cannot exceed 65536:1\n");
+	fatal("ratio of time period to send interval cannot exceed 65536:1\n");
     }
 
-    // Check for IPv4 address
-    r = inet_pton(AF_INET, argv[optind], &addr);
+    // Check for an IPv4 address
+    r = inet_pton(AF_INET, dest_arg, &addr);
     if (r)
     {
-        struct sockaddr_in * dest = (struct sockaddr_in *) &dest_addr;
-        dest->sin_family = AF_INET;
-        dest->sin_addr = addr;
+	struct sockaddr_in * dest = (struct sockaddr_in *) &dest_addr;
+	dest->sin_family = AF_INET;
+	dest->sin_addr = addr;
 	dest_addr_len = sizeof(struct sockaddr_in);
+
+	if (bind_arg)
+	{
+	    r = inet_pton(AF_INET, bind_arg, &addr);
+	    if (r == 0)
+	    {
+		fatal("Invalid bind IP address %s\n", bind_arg);
+	    }
+
+	    struct sockaddr_in * bind = (struct sockaddr_in *) &bind_addr;
+	    bind->sin_family = AF_INET;
+	    bind->sin_addr = addr;
+	    bind_addr_len = sizeof(struct sockaddr_in);
+	}
     }
     else
     {
 	// Perhaps it's an IPv6 address?
-	r = inet_pton(AF_INET6, argv[optind], &addr6);
+	r = inet_pton(AF_INET6, dest_arg, &addr6);
 	if (r == 0)
 	{
-            fatal("Invalid destination IP address %s\n", argv[optind]);
+	    fatal("Invalid destination IP address %s\n", dest_arg);
 	}
 
-        struct sockaddr_in6 * dest6 = (struct sockaddr_in6 *) &dest_addr;
-        dest6->sin6_family = AF_INET6;
-        dest6->sin6_addr = addr6;
+	struct sockaddr_in6 * dest6 = (struct sockaddr_in6 *) &dest_addr;
+	dest6->sin6_family = AF_INET6;
+	dest6->sin6_addr = addr6;
 	dest_addr_len = sizeof(struct sockaddr_in6);
 
 	af_family = AF_INET6;
 	ip_proto = IPPROTO_ICMPV6;
-        echo_request_type = ICMP6_ECHO_REQUEST;
-        echo_reply_type = ICMP6_ECHO_REPLY;
+	echo_request_type = ICMP6_ECHO_REQUEST;
+	echo_reply_type = ICMP6_ECHO_REPLY;
+
+	if (bind_arg)
+	{
+	    r = inet_pton(AF_INET6, bind_arg, &addr6);
+    	    if (r == 0)
+	    {
+		fatal("Invalid source IP address %s\n", bind_arg);
+	    }
+
+	    struct sockaddr_in6 * bind6 = (struct sockaddr_in6 *) &bind_addr;
+	    bind6->sin6_family = AF_INET6;
+	    bind6->sin6_addr = addr6;
+	    bind_addr_len = sizeof(struct sockaddr_in6);
+	}
     }
 }
 
@@ -641,6 +684,7 @@ main(
     char			*argv[])
 {
     char			dest_str[INET6_ADDRSTRLEN];
+    char			bind_str[INET6_ADDRSTRLEN] = "(none)";
     const void *		addr;
     const char *		p;
     pthread_t			thread;
@@ -653,14 +697,31 @@ main(
     send_sock = socket(af_family, SOCK_RAW, ip_proto);
     if (send_sock == -1)
     {
-        perror("socket");
-        fatal("cannot create send socket");
+	perror("socket");
+	fatal("cannot create send socket");
     }
     recv_sock = socket(af_family, SOCK_RAW, ip_proto);
     if (recv_sock == -1)
     {
-        perror("socket");
-        fatal("cannot create recv socket");
+	perror("socket");
+	fatal("cannot create recv socket");
+    }
+
+    // Bind our sockets to an address if requested
+    if (bind_addr_len)
+    {
+	r = bind(send_sock, (struct sockaddr *) &bind_addr, bind_addr_len);
+	if (r == -1)
+	{
+	    perror("bind");
+	    fatal("cannot bind send socket");
+	}
+	r = bind(recv_sock, (struct sockaddr *) &bind_addr, bind_addr_len);
+	if (r == -1)
+	{
+	    perror("bind");
+	    fatal("cannot bind recv socket");
+	}
     }
 
     // Drop privledges
@@ -672,13 +733,13 @@ main(
     array = calloc(array_size, sizeof(*array));
     if (array == NULL)
     {
-        fatal("calloc of packet array failed\n");
+	fatal("calloc of packet array failed\n");
     }
 
     // Set the default loss interval
     if (loss_interval == 0)
     {
-        loss_interval = send_interval * 2;
+	loss_interval = send_interval * 2;
     }
 
     // Unbuffer output
@@ -687,19 +748,37 @@ main(
     // Log our parameters
     if (af_family == AF_INET)
     {
-        addr = (const void *) &((struct sockaddr_in *) &dest_addr)->sin_addr;
+	addr = (const void *) &((struct sockaddr_in *) &dest_addr)->sin_addr;
     }
     else
     {
-        addr = (const void *) &((struct sockaddr_in6 *) &dest_addr)->sin6_addr;
+	addr = (const void *) &((struct sockaddr_in6 *) &dest_addr)->sin6_addr;
     }
     p = inet_ntop(af_family, addr, dest_str, sizeof(dest_str));
     if (p == NULL)
     {
-        fatal("inet_ntop of destination address failed\n");
+	fatal("inet_ntop of destination address failed\n");
     }
-    logger("send_interval %lums  report_interval %lums  loss_interval %lums  time_period %lums  ipaddr %s\n", 
-    	   send_interval, report_interval, loss_interval, time_period, dest_str);
+
+    if (bind_addr_len)
+    {
+	if (af_family == AF_INET)
+	{
+	    addr = (const void *) &((struct sockaddr_in *) &bind_addr)->sin_addr;
+	}
+	else
+	{
+	    addr = (const void *) &((struct sockaddr_in6 *) &bind_addr)->sin6_addr;
+	}
+	p = inet_ntop(af_family, addr, bind_str, sizeof(bind_str));
+	if (p == NULL)
+	{
+	    fatal("inet_ntop of bind address failed\n");
+	}
+    }
+
+    logger("send_interval %lums  report_interval %lums  loss_interval %lums  time_period %lums  dest_addr %s  bind_addr %s\n", 
+    	   send_interval, report_interval, loss_interval, time_period, dest_str, bind_str);
 
     // Convert loss_interval to microseconds
     loss_interval *= 1000;
@@ -711,23 +790,23 @@ main(
     sequence_limit = array_size;
     while ((sequence_limit & 0x8000) == 0)
     {
-        sequence_limit = sequence_limit << 1;
+	sequence_limit = sequence_limit << 1;
     }
 
     // Create recv thread
     r = pthread_create(&thread, NULL, &recv_thread, NULL);
     if (r != 0)
     {
-        perror("pthread_create");
-        fatal("cannot create recv thread");
+	perror("pthread_create");
+	fatal("cannot create recv thread");
     }
 
     // Create send thread
     r = pthread_create(&thread, NULL, &send_thread, NULL);
     if (r != 0)
     {
-        perror("pthread_create");
-        fatal("cannot create send thread");
+	perror("pthread_create");
+	fatal("cannot create send thread");
     }
 
     // Report thread
