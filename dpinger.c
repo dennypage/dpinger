@@ -46,13 +46,15 @@
 #include <pthread.h>
 #include <syslog.h>
 
+// Who we are
+static const char *			progname;
 
 // Flags
 static unsigned int flag_rewind		= 0;
 static unsigned int flag_syslog		= 0;
 
 // Time period over which we are averaging results in ms
-static unsigned long time_period	= 10000;
+static unsigned long time_period	= 25000;
 
 // Interval between sends in ms
 static unsigned long send_interval	= 250;
@@ -60,8 +62,25 @@ static unsigned long send_interval	= 250;
 // Interval between reports in ms
 static unsigned long report_interval	= 1000;
 
+// Interval between alarm checks in ms
+static unsigned long alert_interval	= 1000;
+
 // Interval before a sequence is initially treated as lost in us
 static unsigned long loss_interval	= 0;
+
+
+// Command to invoke for alerts
+#define ALERT_CMD_OUTPUT_MAX			sizeof("1 1000000000000 100\0")
+static char * alert_cmd				= NULL;
+static size_t alert_cmd_offset;
+
+// Threshold for triggering alarms based on latency in us
+static unsigned long latency_alarm_threshold	= 0;
+
+// Threshold for triggering alarms based on loss percentage
+static unsigned long loss_alarm_threshold	= 0;
+
+#define ALARM_DECAY_PERIODS			10
 
 
 // Main ping status array
@@ -126,6 +145,11 @@ static uint16_t			sequence_limit;
 //
 // Log for abnormal events
 //
+
+#ifdef __GNUC__
+static void logger(const char * format, ...) __attribute__ ((format (printf, 1, 2)));
+#endif
+
 static void
 logger(
     const char *		format,
@@ -158,13 +182,13 @@ cksum(
 
     while (len > 1)
     {
-    	sum += *p++;
+	sum += *p++;
 	len -= sizeof(*p);
     }
 
     if (len == 1)
     {
-	sum += (uint16_t) *((uint8_t *) p);
+	sum += (uint16_t) *((const uint8_t *) p);
     }
 
     sum = (sum >> 16) + (sum & 0xFFFF);
@@ -261,7 +285,7 @@ send_thread(void *arg)
 	r = sendto(send_sock, &echo_request, sizeof(icmphdr_t), 0, (struct sockaddr *) &dest_addr, dest_addr_len); 
 	if (r == -1)
 	{
-	    logger("sendto error: %n\n", errno);
+	    logger("sendto error: %d\n", errno);
 	}
 
 	next_slot = (next_slot + 1) % array_size;
@@ -275,7 +299,7 @@ send_thread(void *arg)
     }
 
     // notreached
-    return (arg);
+    return arg;
 }
 
 
@@ -352,7 +376,7 @@ recv_thread(void *arg)
     }
 
     // notreached
-    return (arg);
+    return arg;
 }
 
 
@@ -404,7 +428,7 @@ report_thread(void *arg)
 		total_latency2 += array[slot].latency * array[slot].latency;
 	    }
 	    else if (array[slot].status == PACKET_STATUS_SENT &&
-	    	     ts_elapsed(&array[slot].time_sent, &now) > loss_interval)
+		     ts_elapsed(&array[slot].time_sent, &now) > loss_interval)
 	    {
 		    packets_lost++;
 	    }
@@ -443,16 +467,162 @@ report_thread(void *arg)
     }
 
     // notreached
-    return (arg);
+    return arg;
 }
 
 
+//
+// Alert thread
+//
+static void *
+alert_thread(void *arg)
+{
+    struct timespec		now;
+    struct timespec		sleeptime;
+    unsigned long		packets_received;
+    unsigned long		packets_lost;
+    unsigned long		total_latency;
+    unsigned long		average_latency;
+    unsigned long		average_loss;
+    unsigned int		slot;
+    unsigned int		i;
+    unsigned int		latency_alarm_decay = 0;
+    unsigned int		loss_alarm_decay = 0;
+    unsigned int		alert = 0;
+    unsigned int		alarm;
+    int				r;
+
+    // Set up the timespec for nanosleep
+    sleeptime.tv_sec = alert_interval / 1000;
+    sleeptime.tv_nsec = (alert_interval % 1000) * 1000000;
+
+    while (1)
+    {
+	packets_received	= 0;
+	packets_lost		= 0;
+	total_latency		= 0;
+
+	r = nanosleep(&sleeptime, NULL);
+	if (r == -1)
+	{
+	    logger("nanosleep error in alert thread: %d\n", errno);
+	}
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+
+	slot = next_slot;
+	for (i = 0; i < array_size; i++)
+	{
+	    if (array[slot].status == PACKET_STATUS_RECEIVED)
+	    {
+		packets_received++;
+		total_latency += array[slot].latency;
+	    }
+	    else if (array[slot].status == PACKET_STATUS_SENT &&
+		     ts_elapsed(&array[slot].time_sent, &now) > loss_interval)
+	    {
+		    packets_lost++;
+	    }
+
+	    slot = (slot + 1) % array_size;
+	}
+
+	if (packets_received)
+	{
+	    average_latency = (double) total_latency / packets_received;
+	}
+	else
+	{
+	    average_latency = 0;
+	}
+
+	if (packets_lost)
+	{
+	    average_loss = packets_lost * 100 / (packets_received + packets_lost);
+	}
+	else
+	{
+	    average_loss = 0;
+	}
+
+	if (latency_alarm_threshold)
+	{
+	    if (average_latency > latency_alarm_threshold)
+	    {
+		if (latency_alarm_decay == 0)
+		{
+		    alert = 1;
+		}
+		
+		latency_alarm_decay = ALARM_DECAY_PERIODS;
+	    }
+	    else if (latency_alarm_decay)
+	    {
+	        latency_alarm_decay--;
+		if (latency_alarm_decay == 0)
+		{
+		    alert = 1;
+		}
+	    }
+	}
+
+	if (loss_alarm_threshold)
+	{
+	    if (average_loss > loss_alarm_threshold)
+	    {
+		if (loss_alarm_decay == 0)
+		{
+		    alert = 1;
+		}
+		
+		loss_alarm_decay = ALARM_DECAY_PERIODS;
+	    }
+	    else if (loss_alarm_decay)
+	    {
+	        loss_alarm_decay--;
+		if (loss_alarm_decay == 0)
+		{
+		    alert = 1;
+		}
+	    }
+	}
+
+	if (alert)
+	{
+	    alert = 0;
+
+	    alarm = latency_alarm_decay || loss_alarm_decay;
+	    logger("%s: latency %luus loss %lus\n", alarm ? "Alarm" : "Clear", average_latency, average_loss);
+
+	    if (alert_cmd)
+	    {
+		r = snprintf(alert_cmd + alert_cmd_offset, ALERT_CMD_OUTPUT_MAX, " %u %lu %lu", alarm, average_latency, average_loss);
+		if (r < 0 || r >= (int) ALERT_CMD_OUTPUT_MAX)
+		{
+		    logger("error formatting alert command\n");
+		    continue;
+		}
+
+		// NB system waits for the alert command to return
+		r = system(alert_cmd);
+		if (r == -1)
+		{
+		    logger("error executing alert command\n");
+		}
+	    }
+	}
+    }
+
+    // notreached
+    return arg;
+}
+
 
 //
-// Decode a time value
+// Decode a time argument
 //
 static unsigned long
-get_interval_arg(
+get_time_arg(
     const char *		arg)
 {
     unsigned long		value;
@@ -473,8 +643,36 @@ get_interval_arg(
 	    suffix++;
 	}
 
-	// Garbage in the number
+	// Garbage in the number?
 	if (*suffix != 0)
+	{
+	    value = 0;
+	}
+    }
+    return value;
+}
+
+
+//
+// Decode a percent argument
+//
+static unsigned long
+get_percent_arg(
+    const char *		arg)
+{
+    unsigned long		value;
+    char *			suffix;
+
+    value = strtoul(arg, &suffix, 10);
+    if (value)
+    {
+	if (*suffix == '%')
+	{
+	    suffix++;
+	}
+
+	// Garbage in the number?
+	if (*suffix != 0 || value > 100)
 	{
 	    value = 0;
 	}
@@ -487,21 +685,30 @@ get_interval_arg(
 // Output usage
 //
 static void
-usage(
-    const char *		progname)
+usage(void)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-R] [-S] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] dest_addr [bind_addr]\n\n", progname);
+    fprintf(stderr, "  %s [-R] [-S] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] dest_addr [bind_addr]\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
     fprintf(stderr, "    -S log warnings via syslog\n");
-    fprintf(stderr, "    -s interval between echo requests (default 250m)\n");
-    fprintf(stderr, "    -r interval between reports (default 1s)\n");
-    fprintf(stderr, "    -l interval before packets are treated as lost (default 2x send interval)\n");
-    fprintf(stderr, "    -t time period over which results are averaged (default 10s)\n\n");
-    fprintf(stderr, "    time intervals/periods can be expressed with a suffix of 's' (seconds) or 'm' (milliseconds)\n");
+    fprintf(stderr, "    -s time interval between echo requests (default 250m)\n");
+    fprintf(stderr, "    -r time interval between reports (default 1s)\n");
+    fprintf(stderr, "    -l time interval before packets are treated as lost (default 2x send interval)\n");
+    fprintf(stderr, "    -t time period over which results are averaged (default 25s)\n");
+    fprintf(stderr, "    -A time interval between alerts (default 1s)\n");
+    fprintf(stderr, "    -D time threshold for latency alarm (default none)\n");
+    fprintf(stderr, "    -L percent threshold for loss alarm (default none)\n");
+    fprintf(stderr, "    -C optional command to be invoked via system() for alerts\n\n");
+    fprintf(stderr, "  notes:\n");
+    fprintf(stderr, "    time values can be expressed with a suffix of 'm' (milliseconds) or 's' (seconds)\n");
     fprintf(stderr, "    if no suffix is specified, milliseconds is the default\n\n");
     fprintf(stderr, "    IP addresses can be in either IPv4 or IPv6 format\n\n");
+    fprintf(stderr, "    the output format is \"latency_avg latency_stddev loss_pct\"\n");
+    fprintf(stderr, "    latency values are output in microseconds\n\n");
+    fprintf(stderr, "    the alert_cmd is invoked as \"alert_cmd alarm_flag latency_avg loss_avg\"\n");
+    fprintf(stderr, "    alarm_flag is set to 1 if either latency or loss is in alarm state\n");
+    fprintf(stderr, "    alarm_flag will return to 0 when both have have cleared alarm state\n\n");
 }
 
 
@@ -541,7 +748,9 @@ parse_args(
     int				opt;
     int				r;
 
-    while((opt = getopt(argc, argv, "RSs:r:l:t:")) != -1)
+    progname = argv[0];
+
+    while((opt = getopt(argc, argv, "RSs:r:l:t:A:D:L:C:")) != -1)
     {
 	switch (opt)
 	{
@@ -554,7 +763,7 @@ parse_args(
 	    break;
 
 	case 's':
-	    send_interval = get_interval_arg(optarg);
+	    send_interval = get_time_arg(optarg);
 	    if (send_interval == 0)
 	    {
 		fatal("invalid send interval %s\n", optarg);
@@ -562,7 +771,7 @@ parse_args(
 	    break;
 
 	case 'r':
-	    report_interval = get_interval_arg(optarg);
+	    report_interval = get_time_arg(optarg);
 	    if (report_interval == 0)
 	    {
 		fatal("invalid report interval %s\n", optarg);
@@ -570,7 +779,7 @@ parse_args(
 	    break;
 
 	case 'l':
-	    loss_interval = get_interval_arg(optarg);
+	    loss_interval = get_time_arg(optarg);
 	    if (loss_interval == 0)
 	    {
 		fatal("invalid loss interval %s\n", optarg);
@@ -578,15 +787,49 @@ parse_args(
 	    break;
 
 	case 't':
-	    time_period = get_interval_arg(optarg);
+	    time_period = get_time_arg(optarg);
 	    if (time_period == 0)
 	    {
 		fatal("invalid averaging time period %s\n", optarg);
 	    }
 	    break;
 
+	case 'A':
+	    alert_interval = get_time_arg(optarg);
+	    if (alert_interval == 0)
+	    {
+		fatal("invalid alert interval %s\n", optarg);
+	    }
+	    break;
+
+	case 'D':
+	    latency_alarm_threshold = get_time_arg(optarg);
+	    if (latency_alarm_threshold == 0)
+	    {
+		fatal("invalid latency alarm threshold %s\n", optarg);
+	    }
+	    break;
+
+	case 'L':
+	    loss_alarm_threshold = get_percent_arg(optarg);
+	    if (loss_alarm_threshold == 0)
+	    {
+		fatal("invalid loss alarm threshold %s\n", optarg);
+	    }
+	    break;
+
+	case 'C':
+	    alert_cmd_offset = strlen(optarg);
+	    alert_cmd = malloc (alert_cmd_offset + ALERT_CMD_OUTPUT_MAX);
+	    if (alert_cmd == NULL)
+	    {
+		fatal("malloc of alert command buffer failed\n");
+	    }
+	    strcpy(alert_cmd, optarg);
+	    break;
+
 	default:
-	    usage(argv[0]);
+	    usage();
 	    fatal(NULL);
 	}
     }
@@ -594,7 +837,7 @@ parse_args(
     // Ensure we have the correct number of parameters
     if (argc < optind + 1 || argc > optind + 2)
     {
-	usage(argv[0]);
+	usage();
 	fatal(NULL);
     }
     dest_arg = argv[optind++];
@@ -661,7 +904,7 @@ parse_args(
 	if (bind_arg)
 	{
 	    r = inet_pton(AF_INET6, bind_arg, &addr6);
-    	    if (r == 0)
+	    if (r == 0)
 	    {
 		fatal("Invalid source IP address %s\n", bind_arg);
 	    }
@@ -777,11 +1020,14 @@ main(
 	}
     }
 
-    logger("send_interval %lums  report_interval %lums  loss_interval %lums  time_period %lums  dest_addr %s  bind_addr %s\n", 
-    	   send_interval, report_interval, loss_interval, time_period, dest_str, bind_str);
+    logger("send_interval %lums  report_interval %lums  loss_interval %lums  time_period %lums  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s  alert_cmd \"%s\"\n", 
+	   send_interval, report_interval, loss_interval, time_period, 
+	   alert_interval, latency_alarm_threshold, loss_alarm_threshold,
+	   dest_str, bind_str, alert_cmd ? alert_cmd : "(none)");
 
-    // Convert loss_interval to microseconds
+    // Convert loss interval and alarm threshold to microseconds
     loss_interval *= 1000;
+    latency_alarm_threshold *= 1000;
 
     // Set my identifier
     identifier = htons(getpid());
@@ -807,6 +1053,17 @@ main(
     {
 	perror("pthread_create");
 	fatal("cannot create send thread");
+    }
+
+    // Create alert thread
+    if (latency_alarm_threshold || loss_alarm_threshold)
+    {
+	r = pthread_create(&thread, NULL, &alert_thread, NULL);
+	if (r != 0)
+	{
+	    perror("pthread_create");
+	    fatal("cannot create alert thread");
+	}
     }
 
     // Report thread
