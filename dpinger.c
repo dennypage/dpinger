@@ -692,10 +692,11 @@ static void
 usage(void)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-R] [-S] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] dest_addr [bind_addr]\n\n", progname);
+    fprintf(stderr, "  %s [-R] [-S] [-B bind_addr] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
     fprintf(stderr, "    -S log warnings via syslog\n");
+    fprintf(stderr, "    -B bind (source) address\n");
     fprintf(stderr, "    -s time interval between echo requests (default 250m)\n");
     fprintf(stderr, "    -r time interval between reports (default 1s)\n");
     fprintf(stderr, "    -l time interval before packets are treated as lost (default 2x send interval)\n");
@@ -754,7 +755,7 @@ parse_args(
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "RSs:r:l:t:A:D:L:C:p:")) != -1)
+    while((opt = getopt(argc, argv, "RSB:s:r:l:t:A:D:L:C:p:")) != -1)
     {
 	switch (opt)
 	{
@@ -764,6 +765,10 @@ parse_args(
 
 	case 'S':
 	    flag_syslog = 1;
+	    break;
+
+	case 'B':
+	    bind_arg = optarg;
 	    break;
 
 	case 's':
@@ -843,16 +848,14 @@ parse_args(
     }
 
     // Ensure we have the correct number of parameters
-    if (argc < optind + 1 || argc > optind + 2)
+    if (argc != optind + 1)
     {
 	usage();
 	fatal(NULL);
     }
-    dest_arg = argv[optind++];
-    if (optind <= argc)
-    {
-	bind_arg = argv[optind];
-    }
+
+    // Destination address
+    dest_arg = argv[optind];
 
     // Ensure we have something to average over
     if (time_period < send_interval)
