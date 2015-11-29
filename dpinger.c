@@ -35,6 +35,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <time.h>
+#include <fcntl.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -47,7 +48,10 @@
 #include <syslog.h>
 
 // Who we are
-static const char *			progname;
+static const char * progname;
+
+// Process ID file
+static const char * pidfile_name	= NULL;
 
 // Flags
 static unsigned int flag_rewind		= 0;
@@ -750,7 +754,7 @@ parse_args(
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "RSs:r:l:t:A:D:L:C:")) != -1)
+    while((opt = getopt(argc, argv, "RSs:r:l:t:A:D:L:C:p:")) != -1)
     {
 	switch (opt)
 	{
@@ -826,6 +830,10 @@ parse_args(
 		fatal("malloc of alert command buffer failed\n");
 	    }
 	    strcpy(alert_cmd, optarg);
+	    break;
+
+	case 'p':
+	    pidfile_name = optarg;
 	    break;
 
 	default:
@@ -930,6 +938,8 @@ main(
     char			bind_str[INET6_ADDRSTRLEN] = "(none)";
     const void *		addr;
     const char *		p;
+    int				pidfile_fd;
+    FILE *			pidfile_file;
     pthread_t			thread;
     int				r;
 
@@ -941,13 +951,13 @@ main(
     if (send_sock == -1)
     {
 	perror("socket");
-	fatal("cannot create send socket");
+	fatal("cannot create send socket\n");
     }
     recv_sock = socket(af_family, SOCK_RAW, ip_proto);
     if (recv_sock == -1)
     {
 	perror("socket");
-	fatal("cannot create recv socket");
+	fatal("cannot create recv socket\n");
     }
 
     // Bind our sockets to an address if requested
@@ -957,13 +967,39 @@ main(
 	if (r == -1)
 	{
 	    perror("bind");
-	    fatal("cannot bind send socket");
+	    fatal("cannot bind send socket\n");
 	}
 	r = bind(recv_sock, (struct sockaddr *) &bind_addr, bind_addr_len);
 	if (r == -1)
 	{
 	    perror("bind");
-	    fatal("cannot bind recv socket");
+	    fatal("cannot bind recv socket\n");
+	}
+    }
+
+    // Create pid file
+    if (pidfile_name)
+    {
+	pidfile_fd = open(pidfile_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (pidfile_fd == -1)
+	{
+	    perror("open");
+	    fatal("cannot open/create pid file %s\n", pidfile_name);
+	}
+	pidfile_file = fdopen(pidfile_fd, "w"); 
+	if (pidfile_file == NULL)
+	{
+            perror("fdopen");
+	    fatal("cannot open pid file %s\n", pidfile_name);
+	}
+
+	fprintf(pidfile_file, "%d\n", getpid());
+
+	r = fclose(pidfile_file);
+	if (r == -1)
+	{
+	    perror("fclose");
+	    fatal("cannot write pid file %s\n", pidfile_name);
 	}
     }
 
@@ -1020,6 +1056,7 @@ main(
 	}
     }
 
+    // Log our parameters (sans pidfile)
     logger("send_interval %lums  report_interval %lums  loss_interval %lums  time_period %lums  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s  alert_cmd \"%s\"\n", 
 	   send_interval, report_interval, loss_interval, time_period, 
 	   alert_interval, latency_alarm_threshold, loss_alarm_threshold,
@@ -1044,7 +1081,7 @@ main(
     if (r != 0)
     {
 	perror("pthread_create");
-	fatal("cannot create recv thread");
+	fatal("cannot create recv thread\n");
     }
 
     // Create send thread
@@ -1052,7 +1089,7 @@ main(
     if (r != 0)
     {
 	perror("pthread_create");
-	fatal("cannot create send thread");
+	fatal("cannot create send thread\n");
     }
 
     // Create alert thread
@@ -1062,7 +1099,7 @@ main(
 	if (r != 0)
 	{
 	    perror("pthread_create");
-	    fatal("cannot create alert thread");
+	    fatal("cannot create alert thread\n");
 	}
     }
 
