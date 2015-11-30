@@ -891,9 +891,9 @@ parse_args(
 		fatal("Invalid bind IP address %s\n", bind_arg);
 	    }
 
-	    struct sockaddr_in * bind = (struct sockaddr_in *) &bind_addr;
-	    bind->sin_family = AF_INET;
-	    bind->sin_addr = addr;
+	    struct sockaddr_in * bind4 = (struct sockaddr_in *) &bind_addr;
+	    bind4->sin_family = AF_INET;
+	    bind4->sin_addr = addr;
 	    bind_addr_len = sizeof(struct sockaddr_in);
 	}
     }
