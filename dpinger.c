@@ -497,7 +497,7 @@ alert_thread(
     unsigned int		latency_alarm_decay = 0;
     unsigned int		loss_alarm_decay = 0;
     unsigned int		alert = 0;
-    unsigned int		alarm;
+    unsigned int		alarm_on;
     int				r;
 
     // Set up the timespec for nanosleep
@@ -599,12 +599,12 @@ alert_thread(
 	{
 	    alert = 0;
 
-	    alarm = latency_alarm_decay || loss_alarm_decay;
-	    logger("%s: latency %luus loss %lus\n", alarm ? "Alarm" : "Clear", average_latency, average_loss);
+	    alarm_on = latency_alarm_decay || loss_alarm_decay;
+	    logger("%s: latency %luus loss %lus\n", alarm_on ? "Alarm" : "Clear", average_latency, average_loss);
 
 	    if (alert_cmd)
 	    {
-		r = snprintf(alert_cmd + alert_cmd_offset, ALERT_CMD_OUTPUT_MAX, " %u %lu %lu", alarm, average_latency, average_loss);
+		r = snprintf(alert_cmd + alert_cmd_offset, ALERT_CMD_OUTPUT_MAX, " %u %lu %lu", alarm_on, average_latency, average_loss);
 		if (r < 0 || r >= (int) ALERT_CMD_OUTPUT_MAX)
 		{
 		    logger("error formatting alert command\n");
