@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <signal.h>
 #include <unistd.h>
 #include <time.h>
 #include <fcntl.h>
@@ -145,6 +146,18 @@ static uint16_t			identifier;
 static uint16_t			next_sequence = 0;
 static uint16_t			sequence_limit;
 
+//
+// Remove pidfile_name
+//
+static void
+cleanup()
+{
+    if (pidfile_name != NULL)
+    {
+	unlink(pidfile_name);
+    }
+    exit(0);
+}
 
 //
 // Log for abnormal events
@@ -949,6 +962,7 @@ main(
     FILE *			pidfile_file;
     pthread_t			thread;
     int				r;
+    struct			sigaction act;
 
     // Handle command line args
     parse_args(argc, argv);
@@ -1000,7 +1014,7 @@ main(
 	    fatal("cannot open pid file %s\n", pidfile_name);
 	}
 
-	fprintf(pidfile_file, "%d\n", getpid());
+	fprintf(pidfile_file, "%u\n", getpid());
 
 	r = fclose(pidfile_file);
 	if (r == -1)
@@ -1008,6 +1022,11 @@ main(
 	    perror("fclose");
 	    fatal("cannot write pid file %s\n", pidfile_name);
 	}
+
+	memset(&act, 0, sizeof(act));
+	act.sa_handler = cleanup;
+	sigaction(SIGINT, &act, NULL);
+	sigaction(SIGTERM, &act, NULL);
     }
 
     // Drop privledges
