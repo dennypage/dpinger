@@ -48,43 +48,43 @@
 #include <syslog.h>
 
 // Who we are
-static const char * progname;
+static const char *		progname;
 
 // Process ID file
-static const char * pidfile_name	= NULL;
+static const char *		pidfile_name = NULL;
 
 // Flags
-static unsigned int flag_rewind		= 0;
-static unsigned int flag_syslog		= 0;
+static unsigned int		flag_rewind = 0;
+static unsigned int		flag_syslog = 0;
 
 // Time period over which we are averaging results in ms
-static unsigned long time_period	= 25000;
+static unsigned long		time_period = 25000;
 
 // Interval between sends in ms
-static unsigned long send_interval	= 250;
+static unsigned long		send_interval = 250;
 
 // Interval between reports in ms
-static unsigned long report_interval	= 1000;
+static unsigned long		report_interval = 1000;
 
 // Interval between alarm checks in ms
-static unsigned long alert_interval	= 1000;
+static unsigned long		alert_interval = 1000;
 
 // Interval before a sequence is initially treated as lost in us
-static unsigned long loss_interval	= 0;
+static unsigned long		loss_interval = 0;
 
 
 // Command to invoke for alerts
-#define ALERT_CMD_OUTPUT_MAX			sizeof("1 1000000000000 100\0")
-static char * alert_cmd				= NULL;
-static size_t alert_cmd_offset;
+#define ALERT_CMD_OUTPUT_MAX	sizeof("1 1000000000000 100\0")
+static char *			alert_cmd = NULL;
+static size_t			alert_cmd_offset;
 
 // Threshold for triggering alarms based on latency in us
-static unsigned long latency_alarm_threshold	= 0;
+static unsigned long		latency_alarm_threshold	= 0;
 
 // Threshold for triggering alarms based on loss percentage
-static unsigned long loss_alarm_threshold	= 0;
+static unsigned long		loss_alarm_threshold = 0;
 
-#define ALARM_DECAY_PERIODS			10
+#define ALARM_DECAY_PERIODS	10
 
 
 // Main ping status array
@@ -180,7 +180,7 @@ logger(
 static uint16_t
 cksum(
     const uint16_t *		 p,
-    int len)
+    int				len)
 {
     uint32_t sum = 0;
 
@@ -258,7 +258,8 @@ ts_elapsed(
 // Send thead
 //
 static void *
-send_thread(void *arg)
+send_thread(
+    void *			arg)
 {
     struct timespec		sleeptime;
     int				r;
@@ -311,7 +312,8 @@ send_thread(void *arg)
 // Receive thread
 //
 static void *
-recv_thread(void *arg)
+recv_thread(
+    void *			arg)
 {
     char			packet[1024];
     unsigned int		packet_len;
@@ -388,7 +390,8 @@ recv_thread(void *arg)
 // Report thread
 //
 static void *
-report_thread(void *arg)
+report_thread(
+    void *			arg)
 {
     struct timespec		now;
     struct timespec		sleeptime;
@@ -479,7 +482,8 @@ report_thread(void *arg)
 // Alert thread
 //
 static void *
-alert_thread(void *arg)
+alert_thread(
+    void *			arg)
 {
     struct timespec		now;
     struct timespec		sleeptime;
