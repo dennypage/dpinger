@@ -75,7 +75,7 @@ static unsigned long            loss_interval = 0;
 
 
 // Command to invoke for alerts
-#define ALERT_CMD_OUTPUT_MAX    sizeof("1 1000000000000 100\0")
+#define ALERT_CMD_OUTPUT_MAX    sizeof(" 1 1000000000000 100\0")
 static char *                   alert_cmd = NULL;
 static size_t                   alert_cmd_offset;
 
@@ -315,7 +315,7 @@ send_thread(
         r = nanosleep(&sleeptime, NULL);
         if (r == -1)
         {
-            logger("nanosleep error in send thread: %d", errno);
+            logger("nanosleep error in send thread: %d\n", errno);
         }
     }
 
