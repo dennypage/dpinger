@@ -153,6 +153,7 @@ static uint16_t                 sequence_limit;
 static void
 term_handler(void)
 {
+    // NB this function may be simultaneously invoked by several threads
     if (pidfile_name)
     {
         (void) unlink(pidfile_name);
@@ -615,7 +616,7 @@ alert_thread(
             alert = 0;
 
             alarm_on = latency_alarm_decay || loss_alarm_decay;
-            logger("%s: latency %luus loss %lus\n", alarm_on ? "Alarm" : "Clear", average_latency, average_loss);
+            logger("%s: latency %luus loss %lu%%\n", alarm_on ? "Alarm" : "Clear", average_latency, average_loss);
 
             if (alert_cmd)
             {
