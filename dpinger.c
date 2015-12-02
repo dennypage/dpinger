@@ -191,6 +191,27 @@ logger(
 
 
 //
+// Fatal error
+//
+static void
+fatal(
+    const char *                format,
+    ...)
+{
+    if (format)
+    {
+        va_list args;
+
+        va_start(args, format);
+        vfprintf(stderr, format, args);
+        va_end(args);
+    }
+
+    exit(EXIT_FAILURE);
+}
+
+
+//
 // Compute checksum for ICMP
 //
 static uint16_t
@@ -747,27 +768,6 @@ usage(void)
     fprintf(stderr, "    the alert_cmd is invoked as \"alert_cmd alarm_flag latency_avg loss_avg\"\n");
     fprintf(stderr, "    alarm_flag is set to 1 if either latency or loss is in alarm state\n");
     fprintf(stderr, "    alarm_flag will return to 0 when both have have cleared alarm state\n\n");
-}
-
-
-//
-// Fatal error
-//
-static void
-fatal(
-    const char *                format,
-    ...)
-{
-    if (format)
-    {
-        va_list args;
-
-        va_start(args, format);
-        vfprintf(stderr, format, args);
-        va_end(args);
-    }
-
-    exit(EXIT_FAILURE);
 }
 
 
