@@ -38,7 +38,10 @@
 #include <fcntl.h>
 #include <signal.h>
 
+#include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
@@ -54,6 +57,9 @@ static const char *             progname;
 // Process ID file
 static unsigned int             foreground = 0;
 static const char *             pidfile_name = NULL;
+
+// Status socket path
+static const char *             status_socket_path = NULL;
 
 // Flags
 static unsigned int             flag_rewind = 0;
@@ -158,6 +164,10 @@ term_handler(void)
     if (pidfile_name)
     {
         (void) unlink(pidfile_name);
+    }
+    if (status_socket_path)
+    {
+        (void) unlink(status_socket_path);
     }
     exit(0);
 }
@@ -675,6 +685,77 @@ alert_thread(
 
 
 //
+// Status socket thread
+//
+static void *
+status_socket_thread(
+    void *                      arg)
+{
+    struct timespec             now;
+    unsigned long               average_latency;
+    unsigned long               latency_deviation;
+    unsigned long               average_loss;
+    struct sockaddr_un          sun, con;
+    socklen_t                   sock_len;
+    int                         s_sun, s_con, status_len;
+    char                        *status;
+
+    (void) unlink(status_socket_path);
+    memset(&sun, 0, sizeof(sun));
+    sun.sun_family = AF_UNIX;
+    (void) strncpy(sun.sun_path, status_socket_path, sizeof(sun.sun_path));
+    s_sun = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (s_sun == -1)
+    {
+        perror("socket");
+        fatal("cannot create status socket %s\n", status_socket_path);
+    }
+    if (bind(s_sun, (struct sockaddr *)&sun, SUN_LEN(&sun)) == -1)
+    {
+        perror("bind");
+        fatal("cannot bind status socket\n");
+    }
+    if (listen(s_sun, 5) == -1)
+    {
+        perror("listen");
+        fatal("cannot listen status socket\n");
+    }
+    if (chmod(status_socket_path, 0600) == -1)
+    {
+        perror("chmod");
+        fatal("cannot change status socket permissions\n");
+    }
+
+    while(1)
+    {
+        sock_len = sizeof(con);
+
+        if ((s_con = accept(s_sun, (struct sockaddr *)&con, &sock_len)) == -1)
+        {
+            perror("accept");
+            fatal("cannot accept status socket connection\n");
+        }
+
+        clock_gettime(CLOCK_MONOTONIC, &now);
+
+        report_data(&average_latency, &latency_deviation, &average_loss, &now);
+
+        status_len = asprintf(&status, "%lu %lu %lu\n", average_latency, latency_deviation, average_loss);
+        if (send(s_con, status, status_len, 0) == -1)
+        {
+            perror("send");
+            logger("cannot send answer through status_socket");
+        }
+        free(status);
+        close(s_con);
+    }
+
+    // notreached
+    return arg;
+}
+
+
+//
 // Decode a time argument
 //
 static unsigned long
@@ -744,7 +825,9 @@ static void
 usage(void)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-f] [-R] [-S] [-B bind_addr] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] -[p pidfile] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-f] [-R] [-S] [-B bind_addr] [-s send_interval] [-r report_interval] [-l loss_interval] "
+        "[-t time_period] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-p pid_filename] "
+        "[-U status_socket_path] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -f run in foreground\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
@@ -758,7 +841,8 @@ usage(void)
     fprintf(stderr, "    -D time threshold for latency alarm (default none)\n");
     fprintf(stderr, "    -L percent threshold for loss alarm (default none)\n");
     fprintf(stderr, "    -C optional command to be invoked via system() for alerts\n");
-    fprintf(stderr, "    -p process id file name\n\n");
+    fprintf(stderr, "    -p process id file name\n");
+    fprintf(stderr, "    -U Path to status UNIX socket\n\n");
     fprintf(stderr, "  notes:\n");
     fprintf(stderr, "    time values can be expressed with a suffix of 'm' (milliseconds) or 's' (seconds)\n");
     fprintf(stderr, "    if no suffix is specified, milliseconds is the default\n\n");
@@ -788,7 +872,7 @@ parse_args(
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "fRSB:s:r:l:t:A:D:L:C:p:")) != -1)
+    while((opt = getopt(argc, argv, "fRSB:s:r:l:t:A:D:L:C:p:U:")) != -1)
     {
         switch (opt)
         {
@@ -876,6 +960,10 @@ parse_args(
 
         case 'p':
             pidfile_name = optarg;
+            break;
+
+        case 'U':
+            status_socket_path = optarg;
             break;
 
         default:
@@ -1172,6 +1260,16 @@ main(
         {
             perror("pthread_create");
             fatal("cannot create alert thread\n");
+        }
+    }
+
+    if (status_socket_path)
+    {
+        r = pthread_create(&thread, NULL, &status_socket_thread, NULL);
+        if (r != 0)
+        {
+            perror("pthread_create");
+            fatal("cannot create socket thread\n");
         }
     }
 
