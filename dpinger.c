@@ -399,6 +399,70 @@ recv_thread(
 
 
 //
+// Report data
+//
+static void
+report_data(
+    unsigned long *average_latency,
+    unsigned long *latency_deviation,
+    unsigned long *average_loss,
+    struct timespec *now)
+{
+    unsigned long               packets_received;
+    unsigned long               packets_lost;
+    unsigned long               total_latency;
+    unsigned long long          total_latency2;
+    unsigned int                slot;
+    unsigned int                i;
+
+    packets_received        = 0;
+    packets_lost            = 0;
+    total_latency           = 0;
+    total_latency2          = 0;
+
+    slot = next_slot;
+    for (i = 0; i < array_size; i++)
+    {
+        if (array[slot].status == PACKET_STATUS_RECEIVED)
+        {
+            packets_received++;
+            total_latency += array[slot].latency;
+            total_latency2 += array[slot].latency * array[slot].latency;
+        }
+        else if (array[slot].status == PACKET_STATUS_SENT &&
+                 ts_elapsed(&array[slot].time_sent, now) > loss_interval)
+        {
+                packets_lost++;
+        }
+
+        slot = (slot + 1) % array_size;
+    }
+
+    if (packets_received)
+    {
+        *average_latency = total_latency / packets_received;
+
+        // sqrt( (sum(rtt^2) / packets) - (sum(rtt) / packets)^2)
+        *latency_deviation = llsqrt((total_latency2 / packets_received) - (total_latency / packets_received) * (total_latency / packets_received));
+    }
+    else
+    {
+        *average_latency = 0;
+        *latency_deviation = 0;
+    }
+
+    if (packets_lost)
+    {
+        *average_loss = packets_lost * 100 / (packets_received + packets_lost);
+    }
+    else
+    {
+        *average_loss = 0;
+    }
+}
+
+
+//
 // Report thread
 //
 static void *
@@ -407,15 +471,9 @@ report_thread(
 {
     struct timespec             now;
     struct timespec             sleeptime;
-    unsigned long               packets_received;
-    unsigned long               packets_lost;
-    unsigned long               total_latency;
-    unsigned long long          total_latency2;
     unsigned long               average_latency;
     unsigned long               latency_deviation;
     unsigned long               average_loss;
-    unsigned int                slot;
-    unsigned int                i;
     int                         r;
 
     // Set up the timespec for nanosleep
@@ -424,11 +482,6 @@ report_thread(
 
     while (1)
     {
-        packets_received        = 0;
-        packets_lost            = 0;
-        total_latency           = 0;
-        total_latency2          = 0;
-
         r = nanosleep(&sleeptime, NULL);
         if (r == -1)
         {
@@ -437,45 +490,7 @@ report_thread(
 
         clock_gettime(CLOCK_MONOTONIC, &now);
 
-        slot = next_slot;
-        for (i = 0; i < array_size; i++)
-        {
-            if (array[slot].status == PACKET_STATUS_RECEIVED)
-            {
-                packets_received++;
-                total_latency += array[slot].latency;
-                total_latency2 += array[slot].latency * array[slot].latency;
-            }
-            else if (array[slot].status == PACKET_STATUS_SENT &&
-                     ts_elapsed(&array[slot].time_sent, &now) > loss_interval)
-            {
-                    packets_lost++;
-            }
-
-            slot = (slot + 1) % array_size;
-        }
-
-        if (packets_received)
-        {
-            average_latency = total_latency / packets_received;
-
-            // sqrt( (sum(rtt^2) / packets) - (sum(rtt) / packets)^2)
-            latency_deviation = llsqrt((total_latency2 / packets_received) - (total_latency / packets_received) * (total_latency / packets_received));
-        }
-        else
-        {
-            average_latency = 0;
-            latency_deviation = 0;
-        }
-
-        if (packets_lost)
-        {
-            average_loss = packets_lost * 100 / (packets_received + packets_lost);
-        }
-        else
-        {
-            average_loss = 0;
-        }
+        report_data(&average_latency, &latency_deviation, &average_loss, &now);
 
         printf("%lu %lu %lu\n", average_latency, latency_deviation, average_loss);
         if (flag_rewind)
