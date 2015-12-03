@@ -2,18 +2,18 @@
 //
 // Copyright (c) 2015, Denny Page
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
 // are met:
-// 
+//
 // 1. Redistributions of source code must retain the above copyright
 //    notice, this list of conditions and the following disclaimer.
-// 
+//
 // 2. Redistributions in binary form must reproduce the above copyright
 //    notice, this list of conditions and the following disclaimer in the
 //    documentation and/or other materials provided with the distribution.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -25,7 +25,7 @@
 // LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-// 
+//
 
 #include <stdio.h>
 #include <errno.h>
@@ -304,7 +304,7 @@ send_thread(
         clock_gettime(CLOCK_MONOTONIC, &array[next_slot].time_sent);
         array[next_slot].status = PACKET_STATUS_SENT;
 
-        r = sendto(send_sock, &echo_request, sizeof(icmphdr_t), 0, (struct sockaddr *) &dest_addr, dest_addr_len); 
+        r = sendto(send_sock, &echo_request, sizeof(icmphdr_t), 0, (struct sockaddr *) &dest_addr, dest_addr_len);
         if (r == -1)
         {
             logger("sendto error: %d\n", errno);
@@ -572,7 +572,7 @@ alert_thread(
                 {
                     alert = 1;
                 }
-                
+
                 latency_alarm_decay = ALARM_DECAY_PERIODS;
             }
             else if (latency_alarm_decay)
@@ -593,7 +593,7 @@ alert_thread(
                 {
                     alert = 1;
                 }
-                
+
                 loss_alarm_decay = ALARM_DECAY_PERIODS;
             }
             else if (loss_alarm_decay)
@@ -707,19 +707,20 @@ static void
 usage(void)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-R] [-S] [-B bind_addr] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-R] [-S] [-B bind_addr] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] -[p pidfile] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
     fprintf(stderr, "    -S log warnings via syslog\n");
     fprintf(stderr, "    -B bind (source) address\n");
-    fprintf(stderr, "    -s time interval between echo requests (default 250m)\n");
+    fprintf(stderr, "    -s time interval between echo requests (default 250ms)\n");
     fprintf(stderr, "    -r time interval between reports (default 1s)\n");
     fprintf(stderr, "    -l time interval before packets are treated as lost (default 2x send interval)\n");
     fprintf(stderr, "    -t time period over which results are averaged (default 25s)\n");
     fprintf(stderr, "    -A time interval between alerts (default 1s)\n");
     fprintf(stderr, "    -D time threshold for latency alarm (default none)\n");
     fprintf(stderr, "    -L percent threshold for loss alarm (default none)\n");
-    fprintf(stderr, "    -C optional command to be invoked via system() for alerts\n\n");
+    fprintf(stderr, "    -C optional command to be invoked via system() for alerts\n");
+    fprintf(stderr, "    -p process id file name\n\n");
     fprintf(stderr, "  notes:\n");
     fprintf(stderr, "    time values can be expressed with a suffix of 'm' (milliseconds) or 's' (seconds)\n");
     fprintf(stderr, "    if no suffix is specified, milliseconds is the default\n\n");
@@ -1009,7 +1010,7 @@ main(
             perror("open");
             fatal("cannot open/create pid file %s\n", pidfile_name);
         }
-        pidfile_file = fdopen(pidfile_fd, "w"); 
+        pidfile_file = fdopen(pidfile_fd, "w");
         if (pidfile_file == NULL)
         {
             perror("fdopen");
@@ -1082,8 +1083,8 @@ main(
     }
 
     // Log our parameters (sans pidfile)
-    logger("send_interval %lums  report_interval %lums  loss_interval %lums  time_period %lums  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s  alert_cmd \"%s\"\n", 
-           send_interval, report_interval, loss_interval, time_period, 
+    logger("send_interval %lums  report_interval %lums  loss_interval %lums  time_period %lums  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s  alert_cmd \"%s\"\n",
+           send_interval, report_interval, loss_interval, time_period,
            alert_interval, latency_alarm_threshold, loss_alarm_threshold,
            dest_str, bind_str, alert_cmd ? alert_cmd : "(none)");
 
