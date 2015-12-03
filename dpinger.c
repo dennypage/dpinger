@@ -749,7 +749,7 @@ status_socket_thread(
         else if (send(s_con, status, status_len, 0) == -1)
         {
             perror("send");
-            logger("cannot send answer through status_socket");
+            logger("cannot send answer through status_socket\n");
         }
         free(status);
         close(s_con);
