@@ -127,8 +127,8 @@ static socklen_t                bind_addr_len = 0;
 
 // ICMP echo request/reply header
 //
-// NB: The physical layout of the ICMP is the same between IPv4 and IPv6 so we define our
-//     own type for convenience
+// The physical layout of the ICMP is the same between IPv4 and IPv6 so we define our
+// own type for convenience
 typedef struct
 {
     uint8_t                     type;
@@ -153,7 +153,7 @@ static uint16_t                 sequence_limit;
 static void
 term_handler(void)
 {
-    // NB this function may be simultaneously invoked by several threads
+    // NB: This function may be simultaneously invoked by several threads
     if (pidfile_name)
     {
         (void) unlink(pidfile_name);
@@ -165,7 +165,6 @@ term_handler(void)
 //
 // Log for abnormal events
 //
-
 #ifdef __GNUC__
 static void logger(const char * format, ...) __attribute__ ((format (printf, 1, 2)));
 #endif
@@ -254,9 +253,7 @@ ts_elapsed(
 {
     unsigned long r;
 
-    //
     // Note that we are using monotonic clock and time cannot run backwards
-    //
     if (new->tv_nsec >= old->tv_nsec)
     {
         r = (new->tv_sec - old->tv_sec) * 1000000 + (new->tv_nsec - old->tv_nsec) / 1000;
@@ -289,10 +286,14 @@ send_thread(
     sleeptime.tv_sec = send_interval / 1000;
     sleeptime.tv_nsec = (send_interval % 1000) * 1000000;
 
-    (void) nanosleep(&sleeptime, NULL);
-
     while (1)
     {
+        r = nanosleep(&sleeptime, NULL);
+        if (r == -1)
+        {
+            logger("nanosleep error in send thread: %d\n", errno);
+        }
+
         // Set sequence number and checksum
         echo_request.sequence = htons(next_sequence);
         echo_request.cksum = 0;
@@ -311,12 +312,6 @@ send_thread(
 
         next_slot = (next_slot + 1) % array_size;
         next_sequence = (next_sequence + 1) % sequence_limit;
-
-        r = nanosleep(&sleeptime, NULL);
-        if (r == -1)
-        {
-            logger("nanosleep error in send thread: %d\n", errno);
-        }
     }
 
     // notreached
@@ -627,7 +622,7 @@ alert_thread(
                     continue;
                 }
 
-                // NB system waits for the alert command to return
+                // Note that system waits for the alert command to finish before returning
                 r = system(alert_cmd);
                 if (r == -1)
                 {
