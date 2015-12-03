@@ -741,7 +741,12 @@ status_socket_thread(
         report_data(&average_latency, &latency_deviation, &average_loss, &now);
 
         status_len = asprintf(&status, "%lu %lu %lu\n", average_latency, latency_deviation, average_loss);
-        if (send(s_con, status, status_len, 0) == -1)
+        if (status_len < 0)
+        {
+            perror("asprintf");
+            logger("cannot print collected status\n");
+        }
+        else if (send(s_con, status, status_len, 0) == -1)
         {
             perror("send");
             logger("cannot send answer through status_socket");
