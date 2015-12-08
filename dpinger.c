@@ -52,6 +52,7 @@
 static const char *             progname;
 
 // Process ID file
+static unsigned int             foreground = 0;
 static const char *             pidfile_name = NULL;
 
 // Flags
@@ -456,7 +457,7 @@ report_thread(
 
         if (packets_received)
         {
-            average_latency = (double) total_latency / packets_received;
+            average_latency = total_latency / packets_received;
 
             // sqrt( (sum(rtt^2) / packets) - (sum(rtt) / packets)^2)
             latency_deviation = llsqrt((total_latency2 / packets_received) - (total_latency / packets_received) * (total_latency / packets_received));
@@ -548,7 +549,7 @@ alert_thread(
 
         if (packets_received)
         {
-            average_latency = (double) total_latency / packets_received;
+            average_latency = total_latency / packets_received;
         }
         else
         {
@@ -707,8 +708,9 @@ static void
 usage(void)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-R] [-S] [-B bind_addr] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] -[p pidfile] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-f] [-R] [-S] [-B bind_addr] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] -[p pidfile] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
+    fprintf(stderr, "    -f run in foreground\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
     fprintf(stderr, "    -S log warnings via syslog\n");
     fprintf(stderr, "    -B bind (source) address\n");
@@ -771,10 +773,14 @@ parse_args(
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "RSB:s:r:l:t:A:D:L:C:p:")) != -1)
+    while((opt = getopt(argc, argv, "fRSB:s:r:l:t:A:D:L:C:p:")) != -1)
     {
         switch (opt)
         {
+        case 'f':
+            foreground = 1;
+            break;
+
         case 'R':
             flag_rewind = 1;
             break;
@@ -1016,7 +1022,32 @@ main(
             perror("fdopen");
             fatal("cannot open pid file %s\n", pidfile_name);
         }
+    }
 
+    // End of general errors from command line options
+
+    // Self background
+    if (foreground == 0)
+    {
+        r = fork();
+
+        if (r == -1)
+        {
+            perror("fork");
+            fatal("cannot background\n");
+        }
+
+        if (r)
+        {
+            _exit(EXIT_SUCCESS);
+        }
+
+        (void) setsid();
+    }
+
+    // Write pid file
+    if (pidfile_name)
+    {
         fprintf(pidfile_file, "%u\n", (unsigned) getpid());
 
         r = fclose(pidfile_file);
