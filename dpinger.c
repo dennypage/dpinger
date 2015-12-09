@@ -61,6 +61,10 @@ static const char *             pidfile_name = NULL;
 // Status socket path
 static const char *             status_socket_path = NULL;
 
+// src and dst args
+static const char *             dest_arg = NULL;
+static const char *             bind_arg = NULL;
+
 // Flags
 static unsigned int             flag_rewind = 0;
 static unsigned int             flag_syslog = 0;
@@ -526,7 +530,7 @@ report_thread(
 
         report_data(&average_latency, &latency_deviation, &average_loss, &now);
 
-        printf("%lu %lu %lu %u\n", average_latency, latency_deviation, average_loss, alarm_on);
+        printf("%lu %lu %lu %u %s %s\n", average_latency, latency_deviation, average_loss, alarm_on, bind_arg ? bind_arg : "(none)", dest_arg);
         if (flag_rewind)
         {
             ftruncate(fileno(stdout), ftell(stdout));
@@ -742,7 +746,7 @@ status_socket_thread(
 
         report_data(&average_latency, &latency_deviation, &average_loss, &now);
 
-        status_len = asprintf(&status, "%lu %lu %lu %u\n", average_latency, latency_deviation, average_loss, alarm_on);
+        status_len = asprintf(&status, "%lu %lu %lu %u %s %s\n", average_latency, latency_deviation, average_loss, alarm_on, bind_arg ? bind_arg : "(none)", dest_arg);
         if (status_len < 0)
         {
             perror("asprintf");
@@ -872,8 +876,6 @@ parse_args(
 {
     struct in_addr              addr;
     struct in6_addr             addr6;
-    const char *                dest_arg;
-    const char *                bind_arg = NULL;
     int                         opt;
     int                         r;
 
