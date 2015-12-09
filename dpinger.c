@@ -742,7 +742,7 @@ status_socket_thread(
 
         report_data(&average_latency, &latency_deviation, &average_loss, &now);
 
-        status_len = asprintf(&status, "%lu %lu %lu\n", average_latency, latency_deviation, average_loss);
+        status_len = asprintf(&status, "%lu %lu %lu %u\n", average_latency, latency_deviation, average_loss, alarm_on);
         if (status_len < 0)
         {
             perror("asprintf");
