@@ -92,6 +92,9 @@ static unsigned long            latency_alarm_threshold = 0;
 // Threshold for triggering alarms based on loss percentage
 static unsigned long            loss_alarm_threshold = 0;
 
+// Alarm status
+static unsigned int             alarm_on = 0;
+
 #define ALARM_DECAY_PERIODS     10
 
 
@@ -523,7 +526,7 @@ report_thread(
 
         report_data(&average_latency, &latency_deviation, &average_loss, &now);
 
-        printf("%lu %lu %lu\n", average_latency, latency_deviation, average_loss);
+        printf("%lu %lu %lu %u\n", average_latency, latency_deviation, average_loss, alarm_on);
         if (flag_rewind)
         {
             ftruncate(fileno(stdout), ftell(stdout));
@@ -555,7 +558,6 @@ alert_thread(
     unsigned int                latency_alarm_decay = 0;
     unsigned int                loss_alarm_decay = 0;
     unsigned int                alert = 0;
-    unsigned int                alarm_on;
     int                         r;
 
     // Set up the timespec for nanosleep
