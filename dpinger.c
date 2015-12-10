@@ -38,7 +38,10 @@
 #include <fcntl.h>
 #include <signal.h>
 
+#include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
@@ -54,6 +57,13 @@ static const char *             progname;
 // Process ID file
 static unsigned int             foreground = 0;
 static const char *             pidfile_name = NULL;
+
+// Status socket path
+static const char *             status_socket_path = NULL;
+
+// src and dst args
+static const char *             dest_arg = NULL;
+static const char *             bind_arg = NULL;
 
 // Flags
 static unsigned int             flag_rewind = 0;
@@ -85,6 +95,9 @@ static unsigned long            latency_alarm_threshold = 0;
 
 // Threshold for triggering alarms based on loss percentage
 static unsigned long            loss_alarm_threshold = 0;
+
+// Alarm status
+static unsigned int             alarm_on = 0;
 
 #define ALARM_DECAY_PERIODS     10
 
@@ -159,6 +172,10 @@ term_handler(void)
     {
         (void) unlink(pidfile_name);
     }
+    if (status_socket_path)
+    {
+        (void) unlink(status_socket_path);
+    }
     exit(0);
 }
 
@@ -187,6 +204,27 @@ logger(
         vfprintf(stderr, format, args);
     }
     va_end(args);
+}
+
+
+//
+// Fatal error
+//
+static void
+fatal(
+    const char *                format,
+    ...)
+{
+    if (format)
+    {
+        va_list args;
+
+        va_start(args, format);
+        vfprintf(stderr, format, args);
+        va_end(args);
+    }
+
+    exit(EXIT_FAILURE);
 }
 
 
@@ -399,6 +437,70 @@ recv_thread(
 
 
 //
+// Report data
+//
+static void
+report_data(
+    unsigned long *average_latency,
+    unsigned long *latency_deviation,
+    unsigned long *average_loss,
+    struct timespec *now)
+{
+    unsigned long               packets_received;
+    unsigned long               packets_lost;
+    unsigned long               total_latency;
+    unsigned long long          total_latency2;
+    unsigned int                slot;
+    unsigned int                i;
+
+    packets_received        = 0;
+    packets_lost            = 0;
+    total_latency           = 0;
+    total_latency2          = 0;
+
+    slot = next_slot;
+    for (i = 0; i < array_size; i++)
+    {
+        if (array[slot].status == PACKET_STATUS_RECEIVED)
+        {
+            packets_received++;
+            total_latency += array[slot].latency;
+            total_latency2 += array[slot].latency * array[slot].latency;
+        }
+        else if (array[slot].status == PACKET_STATUS_SENT &&
+                 ts_elapsed(&array[slot].time_sent, now) > loss_interval)
+        {
+                packets_lost++;
+        }
+
+        slot = (slot + 1) % array_size;
+    }
+
+    if (packets_received)
+    {
+        *average_latency = total_latency / packets_received;
+
+        // sqrt( (sum(rtt^2) / packets) - (sum(rtt) / packets)^2)
+        *latency_deviation = llsqrt((total_latency2 / packets_received) - (total_latency / packets_received) * (total_latency / packets_received));
+    }
+    else
+    {
+        *average_latency = 0;
+        *latency_deviation = 0;
+    }
+
+    if (packets_lost)
+    {
+        *average_loss = packets_lost * 100 / (packets_received + packets_lost);
+    }
+    else
+    {
+        *average_loss = 0;
+    }
+}
+
+
+//
 // Report thread
 //
 static void *
@@ -407,15 +509,9 @@ report_thread(
 {
     struct timespec             now;
     struct timespec             sleeptime;
-    unsigned long               packets_received;
-    unsigned long               packets_lost;
-    unsigned long               total_latency;
-    unsigned long long          total_latency2;
     unsigned long               average_latency;
     unsigned long               latency_deviation;
     unsigned long               average_loss;
-    unsigned int                slot;
-    unsigned int                i;
     int                         r;
 
     // Set up the timespec for nanosleep
@@ -424,11 +520,6 @@ report_thread(
 
     while (1)
     {
-        packets_received        = 0;
-        packets_lost            = 0;
-        total_latency           = 0;
-        total_latency2          = 0;
-
         r = nanosleep(&sleeptime, NULL);
         if (r == -1)
         {
@@ -437,47 +528,9 @@ report_thread(
 
         clock_gettime(CLOCK_MONOTONIC, &now);
 
-        slot = next_slot;
-        for (i = 0; i < array_size; i++)
-        {
-            if (array[slot].status == PACKET_STATUS_RECEIVED)
-            {
-                packets_received++;
-                total_latency += array[slot].latency;
-                total_latency2 += array[slot].latency * array[slot].latency;
-            }
-            else if (array[slot].status == PACKET_STATUS_SENT &&
-                     ts_elapsed(&array[slot].time_sent, &now) > loss_interval)
-            {
-                    packets_lost++;
-            }
+        report_data(&average_latency, &latency_deviation, &average_loss, &now);
 
-            slot = (slot + 1) % array_size;
-        }
-
-        if (packets_received)
-        {
-            average_latency = total_latency / packets_received;
-
-            // sqrt( (sum(rtt^2) / packets) - (sum(rtt) / packets)^2)
-            latency_deviation = llsqrt((total_latency2 / packets_received) - (total_latency / packets_received) * (total_latency / packets_received));
-        }
-        else
-        {
-            average_latency = 0;
-            latency_deviation = 0;
-        }
-
-        if (packets_lost)
-        {
-            average_loss = packets_lost * 100 / (packets_received + packets_lost);
-        }
-        else
-        {
-            average_loss = 0;
-        }
-
-        printf("%lu %lu %lu\n", average_latency, latency_deviation, average_loss);
+        printf("%lu %lu %lu %u %s %s\n", average_latency, latency_deviation, average_loss, alarm_on, bind_arg ? bind_arg : "(none)", dest_arg);
         if (flag_rewind)
         {
             ftruncate(fileno(stdout), ftell(stdout));
@@ -509,7 +562,6 @@ alert_thread(
     unsigned int                latency_alarm_decay = 0;
     unsigned int                loss_alarm_decay = 0;
     unsigned int                alert = 0;
-    unsigned int                alarm_on;
     int                         r;
 
     // Set up the timespec for nanosleep
@@ -639,6 +691,82 @@ alert_thread(
 
 
 //
+// Status socket thread
+//
+static void *
+status_socket_thread(
+    void *                      arg)
+{
+    struct timespec             now;
+    unsigned long               average_latency;
+    unsigned long               latency_deviation;
+    unsigned long               average_loss;
+    struct sockaddr_un          sun, con;
+    socklen_t                   sock_len;
+    int                         s_sun, s_con, status_len;
+    char                        *status;
+
+    (void) unlink(status_socket_path);
+    memset(&sun, 0, sizeof(sun));
+    sun.sun_family = AF_UNIX;
+    (void) strncpy(sun.sun_path, status_socket_path, sizeof(sun.sun_path));
+    s_sun = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (s_sun == -1)
+    {
+        perror("socket");
+        fatal("cannot create status socket %s\n", status_socket_path);
+    }
+    if (bind(s_sun, (struct sockaddr *)&sun, SUN_LEN(&sun)) == -1)
+    {
+        perror("bind");
+        fatal("cannot bind status socket\n");
+    }
+    if (listen(s_sun, 5) == -1)
+    {
+        perror("listen");
+        fatal("cannot listen status socket\n");
+    }
+    if (chmod(status_socket_path, 0600) == -1)
+    {
+        perror("chmod");
+        fatal("cannot change status socket permissions\n");
+    }
+
+    while(1)
+    {
+        sock_len = sizeof(con);
+
+        if ((s_con = accept(s_sun, (struct sockaddr *)&con, &sock_len)) == -1)
+        {
+            perror("accept");
+            fatal("cannot accept status socket connection\n");
+        }
+
+        clock_gettime(CLOCK_MONOTONIC, &now);
+
+        report_data(&average_latency, &latency_deviation, &average_loss, &now);
+
+        status_len = asprintf(&status, "%lu %lu %lu %u %s %s\n", average_latency, latency_deviation, average_loss, alarm_on, bind_arg ? bind_arg : "(none)", dest_arg);
+        if (status_len < 0)
+        {
+            perror("asprintf");
+            logger("cannot print collected status\n");
+        }
+        else if (send(s_con, status, status_len, 0) == -1)
+        {
+            perror("send");
+            logger("cannot send answer through status_socket\n");
+        }
+        free(status);
+        close(s_con);
+    }
+
+    // notreached
+    return arg;
+}
+
+
+//
 // Decode a time argument
 //
 static unsigned long
@@ -708,7 +836,9 @@ static void
 usage(void)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-f] [-R] [-S] [-B bind_addr] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] -[p pidfile] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-f] [-R] [-S] [-B bind_addr] [-s send_interval] [-r report_interval] [-l loss_interval] "
+        "[-t time_period] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-p pid_filename] "
+        "[-U status_socket_path] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -f run in foreground\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
@@ -722,7 +852,8 @@ usage(void)
     fprintf(stderr, "    -D time threshold for latency alarm (default none)\n");
     fprintf(stderr, "    -L percent threshold for loss alarm (default none)\n");
     fprintf(stderr, "    -C optional command to be invoked via system() for alerts\n");
-    fprintf(stderr, "    -p process id file name\n\n");
+    fprintf(stderr, "    -p process id file name\n");
+    fprintf(stderr, "    -U Path to status UNIX socket\n\n");
     fprintf(stderr, "  notes:\n");
     fprintf(stderr, "    time values can be expressed with a suffix of 'm' (milliseconds) or 's' (seconds)\n");
     fprintf(stderr, "    if no suffix is specified, milliseconds is the default\n\n");
@@ -736,27 +867,6 @@ usage(void)
 
 
 //
-// Fatal error
-//
-static void
-fatal(
-    const char *                format,
-    ...)
-{
-    if (format)
-    {
-        va_list args;
-
-        va_start(args, format);
-        vfprintf(stderr, format, args);
-        va_end(args);
-    }
-
-    exit(EXIT_FAILURE);
-}
-
-
-//
 // Parse command line arguments
 //
 static void
@@ -766,14 +876,12 @@ parse_args(
 {
     struct in_addr              addr;
     struct in6_addr             addr6;
-    const char *                dest_arg;
-    const char *                bind_arg = NULL;
     int                         opt;
     int                         r;
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "fRSB:s:r:l:t:A:D:L:C:p:")) != -1)
+    while((opt = getopt(argc, argv, "fRSB:s:r:l:t:A:D:L:C:p:U:")) != -1)
     {
         switch (opt)
         {
@@ -861,6 +969,10 @@ parse_args(
 
         case 'p':
             pidfile_name = optarg;
+            break;
+
+        case 'U':
+            status_socket_path = optarg;
             break;
 
         default:
@@ -1157,6 +1269,16 @@ main(
         {
             perror("pthread_create");
             fatal("cannot create alert thread\n");
+        }
+    }
+
+    if (status_socket_path)
+    {
+        r = pthread_create(&thread, NULL, &status_socket_thread, NULL);
+        if (r != 0)
+        {
+            perror("pthread_create");
+            fatal("cannot create socket thread\n");
         }
     }
 
