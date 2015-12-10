@@ -269,7 +269,7 @@ ts_elapsed(
 
 
 //
-// Send thead
+// Send thread
 //
 static void *
 send_thread(
@@ -1003,7 +1003,7 @@ main(
         }
     }
 
-    // Drop privledges
+    // Drop privileges
     r = setgid(getgid());
     r = setuid(getuid());
 
