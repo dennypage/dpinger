@@ -194,7 +194,7 @@ logger(
     const char *                format,
     ...)
 {
-    va_list args;
+    va_list                     args;
 
     va_start(args, format);
     if (flag_syslog)
@@ -214,10 +214,10 @@ logger(
 //
 static uint16_t
 cksum(
-    const uint16_t *             p,
+    const uint16_t *            p,
     int                         len)
 {
-    uint32_t sum = 0;
+    uint32_t                    sum = 0;
 
     while (len > 1)
     {
@@ -271,7 +271,7 @@ ts_elapsed(
     const struct timespec *     old,
     const struct timespec *     new)
 {
-    unsigned long r;
+    unsigned long               r;
 
     // Note that we are using monotonic clock and time cannot run backwards
     if (new->tv_nsec >= old->tv_nsec)
@@ -448,7 +448,7 @@ report(
         else if (array[slot].status == PACKET_STATUS_SENT &&
                  ts_elapsed(&array[slot].time_sent, &now) > loss_interval)
         {
-                packets_lost++;
+            packets_lost++;
         }
 
         slot = (slot + 1) % array_size;
@@ -510,7 +510,7 @@ report_thread(
         len = snprintf(buf, sizeof(buf), "%lu %lu %lu\n", average_latency, latency_deviation, average_loss);
         if (len < 0 || (size_t) len > sizeof(buf))
         {
-            logger("error formatting output in reprot thread\n");
+            logger("error formatting output in report thread\n");
         }
 
         r = write(report_fd, buf, len);
@@ -799,7 +799,7 @@ fatal(
 {
     if (format)
     {
-        va_list args;
+        va_list                 args;
 
         va_start(args, format);
         vfprintf(stderr, format, args);
@@ -1031,7 +1031,6 @@ main(
     const void *                addr;
     const char *                p;
     int                         pidfile_fd;
-    FILE *                      pidfile_file;
     pthread_t                   thread;
     struct                      sigaction act;
     int                         r;
@@ -1142,12 +1141,6 @@ main(
             perror("open");
             fatal("cannot open/create pid file %s\n", pidfile_name);
         }
-        pidfile_file = fdopen(pidfile_fd, "w");
-        if (pidfile_file == NULL)
-        {
-            perror("fdopen");
-            fatal("cannot open pid file %s\n", pidfile_name);
-        }
     }
 
     // End of general errors from command line options
@@ -1180,13 +1173,27 @@ main(
     // Write pid file
     if (pidfile_name)
     {
-        fprintf(pidfile_file, "%u\n", (unsigned) getpid());
+        char                    buf[64];
+        int                     len;
 
-        r = fclose(pidfile_file);
+        len = snprintf(buf, sizeof(buf), "%u\n", (unsigned) getpid());
+        if (len < 0 || (size_t) len > sizeof(buf))
+        {
+            fatal("error formatting pidfile\n");
+        }
+
+        r = write(pidfile_fd, buf, len);
         if (r == -1)
         {
-            perror("fclose");
-            fatal("cannot write pid file %s\n", pidfile_name);
+            perror("write");
+            fatal("error writting pidfile\n");
+        }
+
+        r= close(pidfile_fd);
+        if (r == -1)
+        {
+            perror("close");
+            fatal("error writting pidfile\n");
         }
     }
 
