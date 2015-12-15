@@ -1096,7 +1096,7 @@ main(
 
         if (strlen(usocket_name) >= sizeof(uaddr.sun_path))
         {
-            fatal("Unix socket name too large\n");
+            fatal("socket name too large\n");
         }
 
         usocket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -1171,6 +1171,12 @@ main(
         (void) setsid();
     }
 
+    // Termination handler
+    memset(&act, 0, sizeof(act));
+    act.sa_handler = (void (*)(int)) term_handler;
+    sigaction(SIGTERM, &act, NULL);
+    sigaction(SIGINT, &act, NULL);
+
     // Write pid file
     if (pidfile_name)
     {
@@ -1183,12 +1189,6 @@ main(
             fatal("cannot write pid file %s\n", pidfile_name);
         }
     }
-
-    // Termination handler
-    memset(&act, 0, sizeof(act));
-    act.sa_handler = (void (*)(int)) term_handler;
-    sigaction(SIGTERM, &act, NULL);
-    sigaction(SIGINT, &act, NULL);
 
     // Create the array
     array_size = time_period / send_interval;
@@ -1279,7 +1279,7 @@ main(
         if (r != 0)
         {
             perror("pthread_create");
-            fatal("cannot create send thread\n");
+            fatal("cannot create report thread\n");
         }
     }
 
@@ -1301,7 +1301,7 @@ main(
         if (r != 0)
         {
             perror("pthread_create");
-            fatal("cannot create unix socket thread\n");
+            fatal("cannot create usocket thread\n");
         }
     }
 
