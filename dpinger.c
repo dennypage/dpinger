@@ -39,6 +39,8 @@
 #include <signal.h>
 
 #include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
@@ -59,26 +61,23 @@ static const char *             pidfile_name = NULL;
 static unsigned int             flag_rewind = 0;
 static unsigned int             flag_syslog = 0;
 
+// String representation of target
+static char                     dest_str[INET6_ADDRSTRLEN];
+
 // Time period over which we are averaging results in ms
 static unsigned long            time_period = 25000;
 
 // Interval between sends in ms
 static unsigned long            send_interval = 250;
 
-// Interval between reports in ms
-static unsigned long            report_interval = 1000;
-
-// Interval between alarm checks in ms
-static unsigned long            alert_interval = 1000;
-
 // Interval before a sequence is initially treated as lost in us
 static unsigned long            loss_interval = 0;
 
+// Interval between reports in ms
+static unsigned long            report_interval = 1000;
 
-// Command to invoke for alerts
-#define ALERT_CMD_OUTPUT_MAX    sizeof(" 1 1000000000000 100\0")
-static char *                   alert_cmd = NULL;
-static size_t                   alert_cmd_offset;
+// Interval between alert checks in ms
+static unsigned long            alert_interval = 1000;
 
 // Threshold for triggering alarms based on latency in us
 static unsigned long            latency_alarm_threshold = 0;
@@ -86,7 +85,23 @@ static unsigned long            latency_alarm_threshold = 0;
 // Threshold for triggering alarms based on loss percentage
 static unsigned long            loss_alarm_threshold = 0;
 
+// Command to invoke for alerts
+static char *                   alert_cmd = NULL;
+static size_t                   alert_cmd_offset;
+
+// Number of periods to wait to declare an alarm as cleared
 #define ALARM_DECAY_PERIODS     10
+
+// Report file
+static const char *             report_name = NULL;
+static int                      report_fd;
+
+// Unix socket
+static const char *             usocket_name = NULL;
+static int                      usocket_fd;
+
+// Length of maximum output (dest_str alarm_flag average_latency latency_deviation average_loss)
+#define OUTPUT_MAX              (sizeof(dest_str) + sizeof(" 1 999999999999 999999999999 100\0"))
 
 
 // Main ping status array
@@ -154,7 +169,11 @@ static uint16_t                 sequence_limit;
 static void
 term_handler(void)
 {
-    // NB: This function may be simultaneously invoked by several threads
+    // NB: This function may be simultaneously invoked by multiple threads
+    if (usocket_name)
+    {
+        (void) unlink(usocket_name);
+    }
     if (pidfile_name)
     {
         (void) unlink(pidfile_name);
@@ -385,7 +404,7 @@ recv_thread(
         array_slot = ntohs(icmp->sequence) % array_size;
         if (array[array_slot].status == PACKET_STATUS_RECEIVED)
         {
-            logger("duplicate echo reply received!\n");
+            logger("duplicate echo reply received\n");
             continue;
         }
 
@@ -399,23 +418,79 @@ recv_thread(
 
 
 //
+// Generate a report
+//
+static void
+report(
+    unsigned long               *average_latency,
+    unsigned long               *latency_deviation,
+    unsigned long               *average_loss)
+{
+    struct timespec             now;
+    unsigned long               packets_received = 0;
+    unsigned long               packets_lost = 0;
+    unsigned long               total_latency = 0;
+    unsigned long long          total_latency2 = 0;
+    unsigned int                slot;
+    unsigned int                i;
+
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    slot = next_slot;
+    for (i = 0; i < array_size; i++)
+    {
+        if (array[slot].status == PACKET_STATUS_RECEIVED)
+        {
+            packets_received++;
+            total_latency += array[slot].latency;
+            total_latency2 += array[slot].latency * array[slot].latency;
+        }
+        else if (array[slot].status == PACKET_STATUS_SENT &&
+                 ts_elapsed(&array[slot].time_sent, &now) > loss_interval)
+        {
+                packets_lost++;
+        }
+
+        slot = (slot + 1) % array_size;
+    }
+
+    if (packets_received)
+    {
+        *average_latency = total_latency / packets_received;
+
+        // sqrt( (sum(rtt^2) / packets) - (sum(rtt) / packets)^2)
+        *latency_deviation = llsqrt((total_latency2 / packets_received) - (total_latency / packets_received) * (total_latency / packets_received));
+    }
+    else
+    {
+        *average_latency = 0;
+        *latency_deviation = 0;
+    }
+
+    if (packets_lost)
+    {
+        *average_loss = packets_lost * 100 / (packets_received + packets_lost);
+    }
+    else
+    {
+        *average_loss = 0;
+    }
+}
+
+
+//
 // Report thread
 //
 static void *
 report_thread(
     void *                      arg)
 {
-    struct timespec             now;
+    char                        buf[OUTPUT_MAX];
     struct timespec             sleeptime;
-    unsigned long               packets_received;
-    unsigned long               packets_lost;
-    unsigned long               total_latency;
-    unsigned long long          total_latency2;
     unsigned long               average_latency;
     unsigned long               latency_deviation;
     unsigned long               average_loss;
-    unsigned int                slot;
-    unsigned int                i;
+    int                         len;
     int                         r;
 
     // Set up the timespec for nanosleep
@@ -424,64 +499,34 @@ report_thread(
 
     while (1)
     {
-        packets_received        = 0;
-        packets_lost            = 0;
-        total_latency           = 0;
-        total_latency2          = 0;
-
         r = nanosleep(&sleeptime, NULL);
         if (r == -1)
         {
             logger("nanosleep error in report thread: %d\n", errno);
         }
 
-        clock_gettime(CLOCK_MONOTONIC, &now);
+        report(&average_latency, &latency_deviation, &average_loss);
 
-        slot = next_slot;
-        for (i = 0; i < array_size; i++)
+        len = snprintf(buf, sizeof(buf), "%lu %lu %lu\n", average_latency, latency_deviation, average_loss);
+        if (len < 0 || (size_t) len > sizeof(buf))
         {
-            if (array[slot].status == PACKET_STATUS_RECEIVED)
-            {
-                packets_received++;
-                total_latency += array[slot].latency;
-                total_latency2 += array[slot].latency * array[slot].latency;
-            }
-            else if (array[slot].status == PACKET_STATUS_SENT &&
-                     ts_elapsed(&array[slot].time_sent, &now) > loss_interval)
-            {
-                    packets_lost++;
-            }
-
-            slot = (slot + 1) % array_size;
+            logger("error formatting output in reprot thread\n");
         }
 
-        if (packets_received)
+        r = write(report_fd, buf, len);
+        if (r == -1)
         {
-            average_latency = total_latency / packets_received;
-
-            // sqrt( (sum(rtt^2) / packets) - (sum(rtt) / packets)^2)
-            latency_deviation = llsqrt((total_latency2 / packets_received) - (total_latency / packets_received) * (total_latency / packets_received));
+            logger("write error in report thread: %d\n", errno);
         }
-        else
+        else if (r != len)
         {
-            average_latency = 0;
-            latency_deviation = 0;
+            logger("short write in report thread: %d/%d\n", r, len);
         }
 
-        if (packets_lost)
-        {
-            average_loss = packets_lost * 100 / (packets_received + packets_lost);
-        }
-        else
-        {
-            average_loss = 0;
-        }
-
-        printf("%lu %lu %lu\n", average_latency, latency_deviation, average_loss);
         if (flag_rewind)
         {
-            ftruncate(fileno(stdout), ftell(stdout));
-            rewind(stdout);
+            ftruncate(report_fd, len);
+            lseek(report_fd, SEEK_SET, 0);
         }
     }
 
@@ -497,15 +542,10 @@ static void *
 alert_thread(
     void *                      arg)
 {
-    struct timespec             now;
     struct timespec             sleeptime;
-    unsigned long               packets_received;
-    unsigned long               packets_lost;
-    unsigned long               total_latency;
     unsigned long               average_latency;
+    unsigned long               latency_deviation;
     unsigned long               average_loss;
-    unsigned int                slot;
-    unsigned int                i;
     unsigned int                latency_alarm_decay = 0;
     unsigned int                loss_alarm_decay = 0;
     unsigned int                alert = 0;
@@ -518,52 +558,13 @@ alert_thread(
 
     while (1)
     {
-        packets_received        = 0;
-        packets_lost            = 0;
-        total_latency           = 0;
-
         r = nanosleep(&sleeptime, NULL);
         if (r == -1)
         {
             logger("nanosleep error in alert thread: %d\n", errno);
         }
 
-        clock_gettime(CLOCK_MONOTONIC, &now);
-
-        slot = next_slot;
-        for (i = 0; i < array_size; i++)
-        {
-            if (array[slot].status == PACKET_STATUS_RECEIVED)
-            {
-                packets_received++;
-                total_latency += array[slot].latency;
-            }
-            else if (array[slot].status == PACKET_STATUS_SENT &&
-                     ts_elapsed(&array[slot].time_sent, &now) > loss_interval)
-            {
-                    packets_lost++;
-            }
-
-            slot = (slot + 1) % array_size;
-        }
-
-        if (packets_received)
-        {
-            average_latency = total_latency / packets_received;
-        }
-        else
-        {
-            average_latency = 0;
-        }
-
-        if (packets_lost)
-        {
-            average_loss = packets_lost * 100 / (packets_received + packets_lost);
-        }
-        else
-        {
-            average_loss = 0;
-        }
+        report(&average_latency, &latency_deviation, &average_loss);
 
         if (latency_alarm_threshold)
         {
@@ -612,14 +613,15 @@ alert_thread(
             alert = 0;
 
             alarm_on = latency_alarm_decay || loss_alarm_decay;
-            logger("%s: latency %luus loss %lu%%\n", alarm_on ? "Alarm" : "Clear", average_latency, average_loss);
+            logger("%s: %s latency %luus stddev %luus loss %lu%%\n", dest_str, alarm_on ? "Alarm" : "Clear", average_latency, latency_deviation, average_loss);
 
             if (alert_cmd)
             {
-                r = snprintf(alert_cmd + alert_cmd_offset, ALERT_CMD_OUTPUT_MAX, " %u %lu %lu", alarm_on, average_latency, average_loss);
-                if (r < 0 || r >= (int) ALERT_CMD_OUTPUT_MAX)
+                r = snprintf(alert_cmd + alert_cmd_offset, OUTPUT_MAX, " %s %u %lu %lu %lu",
+                    dest_str, alarm_on, average_latency, latency_deviation, average_loss);
+                if (r < 0 || (size_t) r >= OUTPUT_MAX)
                 {
-                    logger("error formatting alert command\n");
+                    logger("error formatting command in alert thread\n");
                     continue;
                 }
 
@@ -627,7 +629,7 @@ alert_thread(
                 r = system(alert_cmd);
                 if (r == -1)
                 {
-                    logger("error executing alert command\n");
+                    logger("error executing command in alert thread\n");
                 }
             }
         }
@@ -637,67 +639,117 @@ alert_thread(
     return arg;
 }
 
+//
+// Unix socket thread
+//
+static void *
+usocket_thread(
+    void *                      arg)
+{
+    char                        buf[OUTPUT_MAX];
+    unsigned long               average_latency;
+    unsigned long               latency_deviation;
+    unsigned long               average_loss;
+    int                         sock_fd;
+    int                         len;
+    int                         r;
+
+    while (1)
+    {
+        sock_fd = accept(usocket_fd, NULL, NULL);
+        (void) fcntl(sock_fd, F_SETFL, fcntl(sock_fd, F_GETFL, 0) | O_NONBLOCK);
+
+        report(&average_latency, &latency_deviation, &average_loss);
+
+        len = snprintf(buf, sizeof(buf), "%lu %lu %lu\n", average_latency, latency_deviation, average_loss);
+        if (len < 0 || (size_t) len > sizeof(buf))
+        {
+            logger("error formatting output in usocket thread\n");
+        }
+
+        r = write(sock_fd, buf, len);
+        if (r == -1)
+        {
+            logger("write error in usocket thread: %d\n", errno);
+        }
+        else if (r != len)
+        {
+            logger("short write in usocket thread: %d/%d\n", r, len);
+        }
+
+        r = close(sock_fd);
+        if (r == -1)
+        {
+            logger("close error in usocket thread: %d\n", errno);
+        }
+    }
+
+    // notreached
+    return arg;
+}
+
+
 
 //
 // Decode a time argument
 //
-static unsigned long
+static int
 get_time_arg(
-    const char *                arg)
+    const char *                arg,
+    unsigned long *             value)
 {
-    unsigned long               value;
+    unsigned long               t;
     char *                      suffix;
 
-    value = strtoul(arg, &suffix, 10);
-    if (value)
+    t = strtoul(arg, &suffix, 10);
+    if (*suffix == 'm')
     {
-        if (*suffix == 'm')
-        {
-            // Milliseconds
-            suffix++;
-        }
-        else if (*suffix == 's')
-        {
-            // Seconds
-            value *= 1000;
-            suffix++;
-        }
-
-        // Garbage in the number?
-        if (*suffix != 0)
-        {
-            value = 0;
-        }
+        // Milliseconds
+        suffix++;
     }
-    return value;
+    else if (*suffix == 's')
+    {
+        // Seconds
+        *value *= 1000;
+        suffix++;
+    }
+
+    // Garbage in the number?
+    if (*suffix != 0)
+    {
+        return 1;
+    }
+
+    *value = t;
+    return 0;
 }
 
 
 //
 // Decode a percent argument
 //
-static unsigned long
+static int
 get_percent_arg(
-    const char *                arg)
+    const char *                arg,
+    unsigned long *             value)
 {
-    unsigned long               value;
+    unsigned long               t;
     char *                      suffix;
 
-    value = strtoul(arg, &suffix, 10);
-    if (value)
+    t = strtoul(arg, &suffix, 10);
+    if (*suffix == '%')
     {
-        if (*suffix == '%')
-        {
-            suffix++;
-        }
-
-        // Garbage in the number?
-        if (*suffix != 0 || value > 100)
-        {
-            value = 0;
-        }
+        suffix++;
     }
-    return value;
+
+    // Garbage in the number?
+    if (*suffix != 0 || t > 100)
+    {
+        return 1;
+    }
+
+    *value = t;
+    return 0;
 }
 
 
@@ -708,20 +760,22 @@ static void
 usage(void)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-f] [-R] [-S] [-B bind_addr] [-s send_interval] [-r report_interval] [-l loss_interval] [-t time_period] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] -[p pidfile] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-f] [-R] [-S] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -f run in foreground\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
     fprintf(stderr, "    -S log warnings via syslog\n");
     fprintf(stderr, "    -B bind (source) address\n");
     fprintf(stderr, "    -s time interval between echo requests (default 250ms)\n");
-    fprintf(stderr, "    -r time interval between reports (default 1s)\n");
     fprintf(stderr, "    -l time interval before packets are treated as lost (default 2x send interval)\n");
     fprintf(stderr, "    -t time period over which results are averaged (default 25s)\n");
+    fprintf(stderr, "    -r time interval between reports (default 1s)\n");
+    fprintf(stderr, "    -o output file for reports (default stdout)\n");
     fprintf(stderr, "    -A time interval between alerts (default 1s)\n");
     fprintf(stderr, "    -D time threshold for latency alarm (default none)\n");
     fprintf(stderr, "    -L percent threshold for loss alarm (default none)\n");
     fprintf(stderr, "    -C optional command to be invoked via system() for alerts\n");
+    fprintf(stderr, "    -u unix socket name for polling\n");
     fprintf(stderr, "    -p process id file name\n\n");
     fprintf(stderr, "  notes:\n");
     fprintf(stderr, "    time values can be expressed with a suffix of 'm' (milliseconds) or 's' (seconds)\n");
@@ -729,7 +783,7 @@ usage(void)
     fprintf(stderr, "    IP addresses can be in either IPv4 or IPv6 format\n\n");
     fprintf(stderr, "    the output format is \"latency_avg latency_stddev loss_pct\"\n");
     fprintf(stderr, "    latency values are output in microseconds\n\n");
-    fprintf(stderr, "    the alert_cmd is invoked as \"alert_cmd alarm_flag latency_avg loss_avg\"\n");
+    fprintf(stderr, "    the alert_cmd is invoked as \"alert_cmd dest_addr alarm_flag latency_avg loss_avg\"\n");
     fprintf(stderr, "    alarm_flag is set to 1 if either latency or loss is in alarm state\n");
     fprintf(stderr, "    alarm_flag will return to 0 when both have have cleared alarm state\n\n");
 }
@@ -773,7 +827,7 @@ parse_args(
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "fRSB:s:r:l:t:A:D:L:C:p:")) != -1)
+    while((opt = getopt(argc, argv, "fRSB:s:l:t:r:o:A:D:L:C:u:p:")) != -1)
     {
         switch (opt)
         {
@@ -794,56 +848,60 @@ parse_args(
             break;
 
         case 's':
-            send_interval = get_time_arg(optarg);
-            if (send_interval == 0)
+            r = get_time_arg(optarg, &send_interval);
+            if (r || send_interval == 0)
             {
                 fatal("invalid send interval %s\n", optarg);
             }
             break;
 
-        case 'r':
-            report_interval = get_time_arg(optarg);
-            if (report_interval == 0)
-            {
-                fatal("invalid report interval %s\n", optarg);
-            }
-            break;
-
         case 'l':
-            loss_interval = get_time_arg(optarg);
-            if (loss_interval == 0)
+            r = get_time_arg(optarg, &loss_interval);
+            if (r || loss_interval == 0)
             {
                 fatal("invalid loss interval %s\n", optarg);
             }
             break;
 
         case 't':
-            time_period = get_time_arg(optarg);
-            if (time_period == 0)
+            r = get_time_arg(optarg, &time_period);
+            if (r || time_period == 0)
             {
                 fatal("invalid averaging time period %s\n", optarg);
             }
             break;
 
+        case 'r':
+            r = get_time_arg(optarg, &report_interval);
+            if (r)
+            {
+                fatal("invalid report interval %s\n", optarg);
+            }
+            break;
+
+        case 'o':
+            report_name = optarg;
+            break;
+
         case 'A':
-            alert_interval = get_time_arg(optarg);
-            if (alert_interval == 0)
+            r = get_time_arg(optarg, &alert_interval);
+            if (r || alert_interval == 0)
             {
                 fatal("invalid alert interval %s\n", optarg);
             }
             break;
 
         case 'D':
-            latency_alarm_threshold = get_time_arg(optarg);
-            if (latency_alarm_threshold == 0)
+            r = get_time_arg(optarg, &latency_alarm_threshold);
+            if (r || latency_alarm_threshold == 0)
             {
                 fatal("invalid latency alarm threshold %s\n", optarg);
             }
             break;
 
         case 'L':
-            loss_alarm_threshold = get_percent_arg(optarg);
-            if (loss_alarm_threshold == 0)
+            r = get_percent_arg(optarg, &loss_alarm_threshold);
+            if (r || loss_alarm_threshold == 0)
             {
                 fatal("invalid loss alarm threshold %s\n", optarg);
             }
@@ -851,12 +909,16 @@ parse_args(
 
         case 'C':
             alert_cmd_offset = strlen(optarg);
-            alert_cmd = malloc (alert_cmd_offset + ALERT_CMD_OUTPUT_MAX);
+            alert_cmd = malloc (alert_cmd_offset + OUTPUT_MAX);
             if (alert_cmd == NULL)
             {
                 fatal("malloc of alert command buffer failed\n");
             }
             strcpy(alert_cmd, optarg);
+            break;
+
+        case 'u':
+            usocket_name = optarg;
             break;
 
         case 'p':
@@ -874,6 +936,12 @@ parse_args(
     {
         usage();
         fatal(NULL);
+    }
+
+    // Ensure we have something to do: at least one of alarm, report, socket
+    if (report_interval == 0 && latency_alarm_threshold == 0 && loss_alarm_threshold == 0 && usocket_name == NULL)
+    {
+        fatal("no activity enabled\n");
     }
 
     // Destination address
@@ -959,7 +1027,6 @@ main(
     int                         argc,
     char                        *argv[])
 {
-    char                        dest_str[INET6_ADDRSTRLEN];
     char                        bind_str[INET6_ADDRSTRLEN] = "(none)";
     const void *                addr;
     const char *                p;
@@ -1003,9 +1070,68 @@ main(
         }
     }
 
-    // Drop privileges
+    // Drop privleges
     r = setgid(getgid());
     r = setuid(getuid());
+
+    // Create report file
+    if (report_name)
+    {
+        report_fd = open(report_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (report_fd == -1)
+        {
+            perror("open");
+            fatal("cannot open/create report file %s\n", report_name);
+        }
+    }
+    else
+    {
+        report_fd = fileno(stdout);
+    }
+
+    // Create unix socket
+    if (usocket_name)
+    {
+        struct sockaddr_un      uaddr;
+
+        if (strlen(usocket_name) >= sizeof(uaddr.sun_path))
+        {
+            fatal("Unix socket name too large\n");
+        }
+
+        usocket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (usocket_fd == -1)
+        {
+            perror("socket");
+            fatal("cannot create unix domain socket\n");
+        }
+
+        (void) unlink(usocket_name);
+
+        memset(&uaddr, 0, sizeof(uaddr));
+        uaddr.sun_family = AF_UNIX;
+        strcpy(uaddr.sun_path, usocket_name);
+        r = bind(usocket_fd, (struct sockaddr *) &uaddr, sizeof(uaddr));
+        if (r == -1)
+        {
+             perror("bind");
+             fatal("cannot bind unix domain socket\n");
+        }
+
+        r = chmod(usocket_name, 0666);
+        if (r == -1)
+        {
+             perror("fchmod");
+             fatal("cannot fchmod unix domain socket\n");
+        }
+
+        r = listen(usocket_fd, 5);
+        if (r == -1)
+        {
+             perror("listen");
+             fatal("cannot listen on unix domain socket\n");
+        }
+    }
 
     // Create pid file
     if (pidfile_name)
@@ -1078,9 +1204,6 @@ main(
         loss_interval = send_interval * 2;
     }
 
-    // Unbuffer output
-    (void) setvbuf(stdout, NULL, _IOLBF, 0);
-
     // Log our parameters
     if (af_family == AF_INET)
     {
@@ -1113,11 +1236,11 @@ main(
         }
     }
 
-    // Log our parameters (sans pidfile)
-    logger("send_interval %lums  report_interval %lums  loss_interval %lums  time_period %lums  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s  alert_cmd \"%s\"\n",
-           send_interval, report_interval, loss_interval, time_period,
+    // Log our general parameters
+    logger("send_interval %lums  loss_interval %lums  time_period %lums  report_interval %lums  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s\n",
+           send_interval, loss_interval, time_period, report_interval,
            alert_interval, latency_alarm_threshold, loss_alarm_threshold,
-           dest_str, bind_str, alert_cmd ? alert_cmd : "(none)");
+           dest_str, bind_str);
 
     // Convert loss interval and alarm threshold to microseconds
     loss_interval *= 1000;
@@ -1149,6 +1272,17 @@ main(
         fatal("cannot create send thread\n");
     }
 
+    // Report thread
+    if (report_interval)
+    {
+        r = pthread_create(&thread, NULL, &report_thread, NULL);
+        if (r != 0)
+        {
+            perror("pthread_create");
+            fatal("cannot create send thread\n");
+        }
+    }
+
     // Create alert thread
     if (latency_alarm_threshold || loss_alarm_threshold)
     {
@@ -1160,8 +1294,19 @@ main(
         }
     }
 
-    // Report thread
-    report_thread(NULL);
+    // Create usocket thread
+    if (usocket_name)
+    {
+        r = pthread_create(&thread, NULL, &usocket_thread, NULL);
+        if (r != 0)
+        {
+            perror("pthread_create");
+            fatal("cannot create unix socket thread\n");
+        }
+    }
+
+    // Wait (forever) for last thread started
+    pthread_join(thread, NULL);
 
     // notreached
     return 0;
