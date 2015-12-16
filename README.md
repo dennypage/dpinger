@@ -16,7 +16,7 @@ Produce a report every 60 seconds and append it to /tmp/dpinger.out.
   Monitor IP address 192.168.0.1 for latency and loss. Log alerts via syslog if latency
   exceeds 250 milliseconds or loss exceeds 20 percent. Record process id in /run/dpinger.
 
-    dpinger -f -B 192.168.0.50 -r 10s
+    dpinger -f -B 192.168.0.50 -r 10s 192.168.0.1
 
   Monitor IP address 192.168.0.1 for latency and loss. Use 192.168.0.50 as the address
   for sending and receiving ICMP packets. Run in the foreground and report status via
