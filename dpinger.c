@@ -65,25 +65,29 @@ static unsigned int             flag_syslog = 0;
 static char                     dest_str[INET6_ADDRSTRLEN];
 
 // Time period over which we are averaging results in ms
-static unsigned long            time_period = 25000;
+static unsigned long            time_period_msec = 25000;
 
 // Interval between sends in ms
-static unsigned long            send_interval = 250;
+static unsigned long            send_interval_msec = 250;
 
-// Interval before a sequence is initially treated as lost in us
-static unsigned long            loss_interval = 0;
+// Interval before a sequence is initially treated as lost
+// Input from command line in ms and used in us
+static unsigned long            loss_interval_msec = 0;
+static unsigned long            loss_interval_usec = 0;
 
 // Interval between reports in ms
-static unsigned long            report_interval = 1000;
+static unsigned long            report_interval_msec = 1000;
 
 // Interval between alert checks in ms
-static unsigned long            alert_interval = 1000;
+static unsigned long            alert_interval_msec = 1000;
 
-// Threshold for triggering alarms based on latency in us
-static unsigned long            latency_alarm_threshold = 0;
+// Threshold for triggering alarms based on latency
+// Input from command line in ms and used in us
+static unsigned long            latency_alarm_threshold_msec = 0;
+static unsigned long            latency_alarm_threshold_usec = 0;
 
 // Threshold for triggering alarms based on loss percentage
-static unsigned long            loss_alarm_threshold = 0;
+static unsigned long            loss_alarm_threshold_percent = 0;
 
 // Command to invoke for alerts
 static char *                   alert_cmd = NULL;
@@ -100,7 +104,7 @@ static int                      report_fd;
 static const char *             usocket_name = NULL;
 static int                      usocket_fd;
 
-// Length of maximum output (dest_str alarm_flag average_latency latency_deviation average_loss)
+// Length of maximum output (dest_str alarm_flag average_latency_usec latency_deviation average_loss_percent)
 #define OUTPUT_MAX              (sizeof(dest_str) + sizeof(" 1 999999999999 999999999999 100\0"))
 
 
@@ -115,7 +119,7 @@ typedef struct
     } status;
 
     struct timespec             time_sent;
-    unsigned long               latency;
+    unsigned long               latency_usec;
 } ping_entry_t;
 
 static ping_entry_t *           array;
@@ -267,23 +271,23 @@ llsqrt(
 // Compute delta between old time and new time in microseconds
 //
 static unsigned long
-ts_elapsed(
+ts_elapsed_usec(
     const struct timespec *     old,
     const struct timespec *     new)
 {
-    unsigned long               r;
+    unsigned long               r_usec;
 
     // Note that we are using monotonic clock and time cannot run backwards
     if (new->tv_nsec >= old->tv_nsec)
     {
-        r = (new->tv_sec - old->tv_sec) * 1000000 + (new->tv_nsec - old->tv_nsec) / 1000;
+        r_usec = (new->tv_sec - old->tv_sec) * 1000000 + (new->tv_nsec - old->tv_nsec) / 1000;
     }
     else
     {
-        r = (new->tv_sec - old->tv_sec - 1) * 1000000 + (1000000000 + new->tv_nsec - old->tv_nsec) / 1000;
+        r_usec = (new->tv_sec - old->tv_sec - 1) * 1000000 + (1000000000 + new->tv_nsec - old->tv_nsec) / 1000;
     }
 
-    return r;
+    return r_usec;
 }
 
 
@@ -303,8 +307,8 @@ send_thread(
     echo_request.id = identifier;
 
     // Set up the timespec for nanosleep
-    sleeptime.tv_sec = send_interval / 1000;
-    sleeptime.tv_nsec = (send_interval % 1000) * 1000000;
+    sleeptime.tv_sec = send_interval_msec / 1000;
+    sleeptime.tv_nsec = (send_interval_msec % 1000) * 1000000;
 
     while (1)
     {
@@ -408,7 +412,7 @@ recv_thread(
             continue;
         }
 
-        array[array_slot].latency = ts_elapsed(&array[array_slot].time_sent, &now);
+        array[array_slot].latency_usec = ts_elapsed_usec(&array[array_slot].time_sent, &now);
         array[array_slot].status = PACKET_STATUS_RECEIVED;
     }
 
@@ -422,15 +426,15 @@ recv_thread(
 //
 static void
 report(
-    unsigned long               *average_latency,
+    unsigned long               *average_latency_usec,
     unsigned long               *latency_deviation,
-    unsigned long               *average_loss)
+    unsigned long               *average_loss_percent)
 {
     struct timespec             now;
     unsigned long               packets_received = 0;
     unsigned long               packets_lost = 0;
-    unsigned long               total_latency = 0;
-    unsigned long long          total_latency2 = 0;
+    unsigned long               total_latency_usec = 0;
+    unsigned long long          total_latency_usec2 = 0;
     unsigned int                slot;
     unsigned int                i;
 
@@ -442,11 +446,11 @@ report(
         if (array[slot].status == PACKET_STATUS_RECEIVED)
         {
             packets_received++;
-            total_latency += array[slot].latency;
-            total_latency2 += array[slot].latency * array[slot].latency;
+            total_latency_usec += array[slot].latency_usec;
+            total_latency_usec2 += array[slot].latency_usec * array[slot].latency_usec;
         }
         else if (array[slot].status == PACKET_STATUS_SENT &&
-                 ts_elapsed(&array[slot].time_sent, &now) > loss_interval)
+                 ts_elapsed_usec(&array[slot].time_sent, &now) > loss_interval_usec)
         {
             packets_lost++;
         }
@@ -456,24 +460,24 @@ report(
 
     if (packets_received)
     {
-        *average_latency = total_latency / packets_received;
+        *average_latency_usec = total_latency_usec / packets_received;
 
         // sqrt( (sum(rtt^2) / packets) - (sum(rtt) / packets)^2)
-        *latency_deviation = llsqrt((total_latency2 / packets_received) - (total_latency / packets_received) * (total_latency / packets_received));
+        *latency_deviation = llsqrt((total_latency_usec2 / packets_received) - (total_latency_usec / packets_received) * (total_latency_usec / packets_received));
     }
     else
     {
-        *average_latency = 0;
+        *average_latency_usec = 0;
         *latency_deviation = 0;
     }
 
     if (packets_lost)
     {
-        *average_loss = packets_lost * 100 / (packets_received + packets_lost);
+        *average_loss_percent = packets_lost * 100 / (packets_received + packets_lost);
     }
     else
     {
-        *average_loss = 0;
+        *average_loss_percent = 0;
     }
 }
 
@@ -487,15 +491,15 @@ report_thread(
 {
     char                        buf[OUTPUT_MAX];
     struct timespec             sleeptime;
-    unsigned long               average_latency;
+    unsigned long               average_latency_usec;
     unsigned long               latency_deviation;
-    unsigned long               average_loss;
+    unsigned long               average_loss_percent;
     int                         len;
     int                         r;
 
     // Set up the timespec for nanosleep
-    sleeptime.tv_sec = report_interval / 1000;
-    sleeptime.tv_nsec = (report_interval % 1000) * 1000000;
+    sleeptime.tv_sec = report_interval_msec / 1000;
+    sleeptime.tv_nsec = (report_interval_msec % 1000) * 1000000;
 
     while (1)
     {
@@ -505,9 +509,9 @@ report_thread(
             logger("nanosleep error in report thread: %d\n", errno);
         }
 
-        report(&average_latency, &latency_deviation, &average_loss);
+        report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
-        len = snprintf(buf, sizeof(buf), "%lu %lu %lu\n", average_latency, latency_deviation, average_loss);
+        len = snprintf(buf, sizeof(buf), "%lu %lu %lu\n", average_latency_usec, latency_deviation, average_loss_percent);
         if (len < 0 || (size_t) len > sizeof(buf))
         {
             logger("error formatting output in report thread\n");
@@ -543,9 +547,9 @@ alert_thread(
     void *                      arg)
 {
     struct timespec             sleeptime;
-    unsigned long               average_latency;
+    unsigned long               average_latency_usec;
     unsigned long               latency_deviation;
-    unsigned long               average_loss;
+    unsigned long               average_loss_percent;
     unsigned int                latency_alarm_decay = 0;
     unsigned int                loss_alarm_decay = 0;
     unsigned int                alert = 0;
@@ -553,8 +557,8 @@ alert_thread(
     int                         r;
 
     // Set up the timespec for nanosleep
-    sleeptime.tv_sec = alert_interval / 1000;
-    sleeptime.tv_nsec = (alert_interval % 1000) * 1000000;
+    sleeptime.tv_sec = alert_interval_msec / 1000;
+    sleeptime.tv_nsec = (alert_interval_msec % 1000) * 1000000;
 
     while (1)
     {
@@ -564,11 +568,11 @@ alert_thread(
             logger("nanosleep error in alert thread: %d\n", errno);
         }
 
-        report(&average_latency, &latency_deviation, &average_loss);
+        report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
-        if (latency_alarm_threshold)
+        if (latency_alarm_threshold_usec)
         {
-            if (average_latency > latency_alarm_threshold)
+            if (average_latency_usec > latency_alarm_threshold_usec)
             {
                 if (latency_alarm_decay == 0)
                 {
@@ -587,9 +591,9 @@ alert_thread(
             }
         }
 
-        if (loss_alarm_threshold)
+        if (loss_alarm_threshold_percent)
         {
-            if (average_loss > loss_alarm_threshold)
+            if (average_loss_percent > loss_alarm_threshold_percent)
             {
                 if (loss_alarm_decay == 0)
                 {
@@ -613,12 +617,12 @@ alert_thread(
             alert = 0;
 
             alarm_on = latency_alarm_decay || loss_alarm_decay;
-            logger("%s: %s latency %luus stddev %luus loss %lu%%\n", dest_str, alarm_on ? "Alarm" : "Clear", average_latency, latency_deviation, average_loss);
+            logger("%s: %s latency %luus stddev %luus loss %lu%%\n", dest_str, alarm_on ? "Alarm" : "Clear", average_latency_usec, latency_deviation, average_loss_percent);
 
             if (alert_cmd)
             {
                 r = snprintf(alert_cmd + alert_cmd_offset, OUTPUT_MAX, " %s %u %lu %lu %lu",
-                    dest_str, alarm_on, average_latency, latency_deviation, average_loss);
+                    dest_str, alarm_on, average_latency_usec, latency_deviation, average_loss_percent);
                 if (r < 0 || (size_t) r >= OUTPUT_MAX)
                 {
                     logger("error formatting command in alert thread\n");
@@ -647,9 +651,9 @@ usocket_thread(
     void *                      arg)
 {
     char                        buf[OUTPUT_MAX];
-    unsigned long               average_latency;
+    unsigned long               average_latency_usec;
     unsigned long               latency_deviation;
-    unsigned long               average_loss;
+    unsigned long               average_loss_percent;
     int                         sock_fd;
     int                         len;
     int                         r;
@@ -659,9 +663,9 @@ usocket_thread(
         sock_fd = accept(usocket_fd, NULL, NULL);
         (void) fcntl(sock_fd, F_SETFL, fcntl(sock_fd, F_GETFL, 0) | O_NONBLOCK);
 
-        report(&average_latency, &latency_deviation, &average_loss);
+        report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
-        len = snprintf(buf, sizeof(buf), "%lu %lu %lu\n", average_latency, latency_deviation, average_loss);
+        len = snprintf(buf, sizeof(buf), "%lu %lu %lu\n", average_latency_usec, latency_deviation, average_loss_percent);
         if (len < 0 || (size_t) len > sizeof(buf))
         {
             logger("error formatting output in usocket thread\n");
@@ -692,9 +696,10 @@ usocket_thread(
 
 //
 // Decode a time argument
+// Return (int) ms
 //
 static int
-get_time_arg(
+get_time_arg_msec(
     const char *                arg,
     unsigned long *             value)
 {
@@ -848,31 +853,31 @@ parse_args(
             break;
 
         case 's':
-            r = get_time_arg(optarg, &send_interval);
-            if (r || send_interval == 0)
+            r = get_time_arg_msec(optarg, &send_interval_msec);
+            if (r || send_interval_msec == 0)
             {
                 fatal("invalid send interval %s\n", optarg);
             }
             break;
 
         case 'l':
-            r = get_time_arg(optarg, &loss_interval);
-            if (r || loss_interval == 0)
+            r = get_time_arg_msec(optarg, &loss_interval_msec);
+            if (r || loss_interval_msec == 0)
             {
                 fatal("invalid loss interval %s\n", optarg);
             }
             break;
 
         case 't':
-            r = get_time_arg(optarg, &time_period);
-            if (r || time_period == 0)
+            r = get_time_arg_msec(optarg, &time_period_msec);
+            if (r || time_period_msec == 0)
             {
                 fatal("invalid averaging time period %s\n", optarg);
             }
             break;
 
         case 'r':
-            r = get_time_arg(optarg, &report_interval);
+            r = get_time_arg_msec(optarg, &report_interval_msec);
             if (r)
             {
                 fatal("invalid report interval %s\n", optarg);
@@ -884,24 +889,24 @@ parse_args(
             break;
 
         case 'A':
-            r = get_time_arg(optarg, &alert_interval);
-            if (r || alert_interval == 0)
+            r = get_time_arg_msec(optarg, &alert_interval_msec);
+            if (r || alert_interval_msec == 0)
             {
                 fatal("invalid alert interval %s\n", optarg);
             }
             break;
 
         case 'D':
-            r = get_time_arg(optarg, &latency_alarm_threshold);
-            if (r || latency_alarm_threshold == 0)
+            r = get_time_arg_msec(optarg, &latency_alarm_threshold_msec);
+            if (r || latency_alarm_threshold_msec == 0)
             {
                 fatal("invalid latency alarm threshold %s\n", optarg);
             }
             break;
 
         case 'L':
-            r = get_percent_arg(optarg, &loss_alarm_threshold);
-            if (r || loss_alarm_threshold == 0)
+            r = get_percent_arg(optarg, &loss_alarm_threshold_percent);
+            if (r || loss_alarm_threshold_percent == 0)
             {
                 fatal("invalid loss alarm threshold %s\n", optarg);
             }
@@ -939,7 +944,7 @@ parse_args(
     }
 
     // Ensure we have something to do: at least one of alarm, report, socket
-    if (report_interval == 0 && latency_alarm_threshold == 0 && loss_alarm_threshold == 0 && usocket_name == NULL)
+    if (report_interval_msec == 0 && latency_alarm_threshold_msec == 0 && loss_alarm_threshold_percent == 0 && usocket_name == NULL)
     {
         fatal("no activity enabled\n");
     }
@@ -948,14 +953,14 @@ parse_args(
     dest_arg = argv[optind];
 
     // Ensure we have something to average over
-    if (time_period < send_interval)
+    if (time_period_msec < send_interval_msec)
     {
         fatal("time period cannot be less than send interval\n");
     }
 
     // Ensure we don't have sequence space issues. This really should only be hit by
     // complete accident. Even a ratio of 16384:1 would be excessive.
-    if (time_period / send_interval > 65536)
+    if (time_period_msec / send_interval_msec > 65536)
     {
         fatal("ratio of time period to send interval cannot exceed 65536:1\n");
     }
@@ -1198,7 +1203,7 @@ main(
     }
 
     // Create the array
-    array_size = time_period / send_interval;
+    array_size = time_period_msec / send_interval_msec;
     array = calloc(array_size, sizeof(*array));
     if (array == NULL)
     {
@@ -1206,9 +1211,9 @@ main(
     }
 
     // Set the default loss interval
-    if (loss_interval == 0)
+    if (loss_interval_msec == 0)
     {
-        loss_interval = send_interval * 2;
+        loss_interval_msec = send_interval_msec * 2;
     }
 
     // Log our parameters
@@ -1245,13 +1250,13 @@ main(
 
     // Log our general parameters
     logger("send_interval %lums  loss_interval %lums  time_period %lums  report_interval %lums  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s\n",
-           send_interval, loss_interval, time_period, report_interval,
-           alert_interval, latency_alarm_threshold, loss_alarm_threshold,
+           send_interval_msec, loss_interval_msec, time_period_msec, report_interval_msec,
+           alert_interval_msec, latency_alarm_threshold_msec, loss_alarm_threshold_percent,
            dest_str, bind_str);
 
     // Convert loss interval and alarm threshold to microseconds
-    loss_interval *= 1000;
-    latency_alarm_threshold *= 1000;
+    loss_interval_usec = loss_interval_msec * 1000;
+    latency_alarm_threshold_usec = latency_alarm_threshold_msec * 1000;
 
     // Set my identifier
     identifier = htons(getpid());
@@ -1280,7 +1285,7 @@ main(
     }
 
     // Report thread
-    if (report_interval)
+    if (report_interval_msec)
     {
         r = pthread_create(&thread, NULL, &report_thread, NULL);
         if (r != 0)
@@ -1291,7 +1296,7 @@ main(
     }
 
     // Create alert thread
-    if (latency_alarm_threshold || loss_alarm_threshold)
+    if (latency_alarm_threshold_msec || loss_alarm_threshold)
     {
         r = pthread_create(&thread, NULL, &alert_thread, NULL);
         if (r != 0)
