@@ -1069,7 +1069,7 @@ main(
         }
     }
 
-    // Drop privleges
+    // Drop privileges
     r = setgid(getgid());
     r = setuid(getuid());
 
@@ -1186,14 +1186,14 @@ main(
         if (r == -1)
         {
             perror("write");
-            fatal("error writting pidfile\n");
+            fatal("error writing pidfile\n");
         }
 
         r= close(pidfile_fd);
         if (r == -1)
         {
             perror("close");
-            fatal("error writting pidfile\n");
+            fatal("error writing pidfile\n");
         }
     }
 
