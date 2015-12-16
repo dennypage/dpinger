@@ -696,7 +696,6 @@ usocket_thread(
 
 //
 // Decode a time argument
-// Return (int) ms
 //
 static int
 get_time_arg_msec(
@@ -1296,7 +1295,7 @@ main(
     }
 
     // Create alert thread
-    if (latency_alarm_threshold_msec || loss_alarm_threshold)
+    if (latency_alarm_threshold_msec || loss_alarm_threshold_percent)
     {
         r = pthread_create(&thread, NULL, &alert_thread, NULL);
         if (r != 0)
