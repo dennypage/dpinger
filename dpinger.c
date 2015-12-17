@@ -104,8 +104,10 @@ static int                      report_fd;
 static const char *             usocket_name = NULL;
 static int                      usocket_fd;
 
+static char                     identifier[64] = "\0";
+
 // Length of maximum output (dest_str alarm_flag average_latency_usec latency_deviation average_loss_percent)
-#define OUTPUT_MAX              (sizeof(dest_str) + sizeof(" 1 999999999999 999999999999 100\0"))
+#define OUTPUT_MAX              (sizeof(identifier) + sizeof(dest_str) + sizeof(" 1 999999999999 999999999999 100\0"))
 
 
 // Main ping status array
@@ -161,8 +163,8 @@ typedef struct
 // Echo request header for sendto
 static icmphdr_t                echo_request;
 
-// Identifier and Sequence information
-static uint16_t                 identifier;
+// Echo id and Sequence information
+static uint16_t                 echo_id;
 static uint16_t                 next_sequence = 0;
 static uint16_t                 sequence_limit;
 
@@ -304,7 +306,7 @@ send_thread(
     // Set up our echo request packet
     echo_request.type = echo_request_type;
     echo_request.code = 0;
-    echo_request.id = identifier;
+    echo_request.id = echo_id;
 
     // Set up the timespec for nanosleep
     sleeptime.tv_sec = send_interval_msec / 1000;
@@ -400,7 +402,7 @@ recv_thread(
         }
 
         // If it's not an echo reply for us, skip the packet
-        if (icmp->type != echo_reply_type || icmp->id != identifier)
+        if (icmp->type != echo_reply_type || icmp->id != echo_id)
         {
             continue;
         }
@@ -511,7 +513,7 @@ report_thread(
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
-        len = snprintf(buf, sizeof(buf), "%lu %lu %lu\n", average_latency_usec, latency_deviation, average_loss_percent);
+        len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
         if (len < 0 || (size_t) len > sizeof(buf))
         {
             logger("error formatting output in report thread\n");
@@ -617,12 +619,11 @@ alert_thread(
             alert = 0;
 
             alarm_on = latency_alarm_decay || loss_alarm_decay;
-            logger("%s: %s latency %luus stddev %luus loss %lu%%\n", dest_str, alarm_on ? "Alarm" : "Clear", average_latency_usec, latency_deviation, average_loss_percent);
+            logger("%s%s: %s latency %luus stddev %luus loss %lu%%\n", identifier, dest_str, alarm_on ? "Alarm" : "Clear", average_latency_usec, latency_deviation, average_loss_percent);
 
             if (alert_cmd)
             {
-                r = snprintf(alert_cmd + alert_cmd_offset, OUTPUT_MAX, " %s %u %lu %lu %lu",
-                    dest_str, alarm_on, average_latency_usec, latency_deviation, average_loss_percent);
+                r = snprintf(alert_cmd + alert_cmd_offset, OUTPUT_MAX, " %s%s %u %lu %lu %lu", identifier, dest_str, alarm_on, average_latency_usec, latency_deviation, average_loss_percent);
                 if (r < 0 || (size_t) r >= OUTPUT_MAX)
                 {
                     logger("error formatting command in alert thread\n");
@@ -665,7 +666,7 @@ usocket_thread(
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
-        len = snprintf(buf, sizeof(buf), "%lu %lu %lu\n", average_latency_usec, latency_deviation, average_loss_percent);
+        len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
         if (len < 0 || (size_t) len > sizeof(buf))
         {
             logger("error formatting output in usocket thread\n");
@@ -764,7 +765,7 @@ static void
 usage(void)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-f] [-R] [-S] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-f] [-R] [-S] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -f run in foreground\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
@@ -779,6 +780,7 @@ usage(void)
     fprintf(stderr, "    -D time threshold for latency alarm (default none)\n");
     fprintf(stderr, "    -L percent threshold for loss alarm (default none)\n");
     fprintf(stderr, "    -C optional command to be invoked via system() for alerts\n");
+    fprintf(stderr, "    -i identifier text to include in output\n");
     fprintf(stderr, "    -u unix socket name for polling\n");
     fprintf(stderr, "    -p process id file name\n\n");
     fprintf(stderr, "  notes:\n");
@@ -826,12 +828,13 @@ parse_args(
     struct in6_addr             addr6;
     const char *                dest_arg;
     const char *                bind_arg = NULL;
+    size_t                      len;
     int                         opt;
     int                         r;
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "fRSB:s:l:t:r:o:A:D:L:C:u:p:")) != -1)
+    while((opt = getopt(argc, argv, "fRSB:s:l:t:r:o:A:D:L:C:i:u:p:")) != -1)
     {
         switch (opt)
         {
@@ -918,7 +921,19 @@ parse_args(
             {
                 fatal("malloc of alert command buffer failed\n");
             }
-            strcpy(alert_cmd, optarg);
+            memcpy(alert_cmd, optarg, alert_cmd_offset);
+            break;
+
+        case 'i':
+            len = strlen(optarg);
+            if (len >= sizeof(identifier) - 1)
+            {
+                fatal("identifier argument too large (max %u bytes)\n", sizeof(identifier) - 1);
+            }
+            // optarg with a space appended
+            memcpy(identifier, optarg, len);
+            identifier[len] = ' ';
+            identifier[len + 1] = '\0';
             break;
 
         case 'u':
@@ -1248,17 +1263,17 @@ main(
     }
 
     // Log our general parameters
-    logger("send_interval %lums  loss_interval %lums  time_period %lums  report_interval %lums  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s\n",
+    logger("send_interval %lums  loss_interval %lums  time_period %lums  report_interval %lums  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s  identifier \"%s\"\n",
            send_interval_msec, loss_interval_msec, time_period_msec, report_interval_msec,
            alert_interval_msec, latency_alarm_threshold_msec, loss_alarm_threshold_percent,
-           dest_str, bind_str);
+           dest_str, bind_str, identifier);
 
     // Convert loss interval and alarm threshold to microseconds
     loss_interval_usec = loss_interval_msec * 1000;
     latency_alarm_threshold_usec = latency_alarm_threshold_msec * 1000;
 
-    // Set my identifier
-    identifier = htons(getpid());
+    // Set my echo id
+    echo_id = htons(getpid());
 
     // Set the limit for sequence number to ensure a multiple of array size
     sequence_limit = array_size;
