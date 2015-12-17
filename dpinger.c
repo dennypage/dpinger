@@ -89,6 +89,9 @@ static unsigned long            latency_alarm_threshold_usec = 0;
 // Threshold for triggering alarms based on loss percentage
 static unsigned long            loss_alarm_threshold_percent = 0;
 
+// alarm state
+static unsigned int             alarm_on = 0;
+
 // Command to invoke for alerts
 static char *                   alert_cmd = NULL;
 static size_t                   alert_cmd_offset;
@@ -513,7 +516,7 @@ report_thread(
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
-        len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
+        len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu %u\n", identifier, average_latency_usec, latency_deviation, average_loss_percent, alarm_on);
         if (len < 0 || (size_t) len > sizeof(buf))
         {
             logger("error formatting output in report thread\n");
@@ -555,7 +558,6 @@ alert_thread(
     unsigned int                latency_alarm_decay = 0;
     unsigned int                loss_alarm_decay = 0;
     unsigned int                alert = 0;
-    unsigned int                alarm_on;
     int                         r;
 
     // Set up the timespec for nanosleep
@@ -666,7 +668,7 @@ usocket_thread(
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
-        len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
+        len = snprintf(buf, sizeof(buf), "%s %lu %lu %lu %u\n", identifier, average_latency_usec, latency_deviation, average_loss_percent, alarm_on);
         if (len < 0 || (size_t) len > sizeof(buf))
         {
             logger("error formatting output in usocket thread\n");
