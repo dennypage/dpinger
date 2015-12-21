@@ -1,8 +1,25 @@
 # dpinger
 
-dpinger is a daemon for continous monitoring of latency and loss on a network connection. It is
+dpinger is a daemon for continuous monitoring of latency and loss on a network connection. It is
 intended for use by firewalls to monitor link health, as well as for providing information to
 various monitoring systems such as Cacti, Nagios, Zabbix, etc. 
+
+The output of dpinger can either be file or socket based, and consists of three numbers:
+  
+    <Average Latency in μs> <Standard Deviation in μs> <Percentage of Loss>
+    
+dpinger also provides for invocation of a command based upon threshold values
+for Average Latency or Percentage of Loss. Arguments to the command are:
+
+    <Target IP> <Alarm on/off> <Average Latency> <Standard Deviation> <Percentage of Loss>
+
+In addition to command invocation, dpinger can also log alerts via syslog. 
+
+If several instances of dpinger are being used to monitor different targets, or the same target
+with different source addresses, etc., an Identifier can be added to the output to identify
+which instance of dpinger is the source. This is particularly useful with syslog.
+
+<br>
 
 Usage examples:
 
