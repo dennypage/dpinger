@@ -317,7 +317,7 @@ send_thread(
         r = nanosleep(&sleeptime, NULL);
         if (r == -1)
         {
-            logger("nanosleep error in send thread: %d\n", errno);
+            logger("%s%s: nanosleep error in send thread: %d\n", identifier, dest_str, errno);
         }
 
         // Set sequence number and checksum
@@ -508,7 +508,7 @@ report_thread(
         r = nanosleep(&sleeptime, NULL);
         if (r == -1)
         {
-            logger("nanosleep error in report thread: %d\n", errno);
+            logger("%s%s: nanosleep error in report thread: %d\n", identifier, dest_str, errno);
         }
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
@@ -516,17 +516,17 @@ report_thread(
         len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
         if (len < 0 || (size_t) len > sizeof(buf))
         {
-            logger("error formatting output in report thread\n");
+            logger("%s%s: error formatting output in report thread\n", identifier, dest_str);
         }
 
         r = write(report_fd, buf, len);
         if (r == -1)
         {
-            logger("write error in report thread: %d\n", errno);
+            logger("%s%s: write error in report thread: %d\n", identifier, dest_str, errno);
         }
         else if (r != len)
         {
-            logger("short write in report thread: %d/%d\n", r, len);
+            logger("%s%s: short write in report thread: %d/%d\n", identifier, dest_str, r, len);
         }
 
         if (flag_rewind)
@@ -567,7 +567,7 @@ alert_thread(
         r = nanosleep(&sleeptime, NULL);
         if (r == -1)
         {
-            logger("nanosleep error in alert thread: %d\n", errno);
+            logger("%s%s: nanosleep error in alert thread: %d\n", identifier, dest_str, errno);
         }
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
@@ -626,7 +626,7 @@ alert_thread(
                 r = snprintf(alert_cmd + alert_cmd_offset, OUTPUT_MAX, " %s%s %u %lu %lu %lu", identifier, dest_str, alarm_on, average_latency_usec, latency_deviation, average_loss_percent);
                 if (r < 0 || (size_t) r >= OUTPUT_MAX)
                 {
-                    logger("error formatting command in alert thread\n");
+                    logger("%s%s: error formatting command in alert thread\n", identifier, dest_str);
                     continue;
                 }
 
@@ -634,7 +634,7 @@ alert_thread(
                 r = system(alert_cmd);
                 if (r == -1)
                 {
-                    logger("error executing command in alert thread\n");
+                    logger("%s%s: error executing command in alert thread\n", identifier, dest_str);
                 }
             }
         }
@@ -669,23 +669,23 @@ usocket_thread(
         len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
         if (len < 0 || (size_t) len > sizeof(buf))
         {
-            logger("error formatting output in usocket thread\n");
+            logger("%s%s: error formatting output in usocket thread\n", identifier, dest_str);
         }
 
         r = write(sock_fd, buf, len);
         if (r == -1)
         {
-            logger("write error in usocket thread: %d\n", errno);
+            logger("%s%s: write error in usocket thread: %d\n", identifier, dest_str, errno);
         }
         else if (r != len)
         {
-            logger("short write in usocket thread: %d/%d\n", r, len);
+            logger("%s%s: short write in usocket thread: %d/%d\n", identifier, dest_str, r, len);
         }
 
         r = close(sock_fd);
         if (r == -1)
         {
-            logger("close error in usocket thread: %d\n", errno);
+            logger("%s%s: close error in usocket thread: %d\n", identifier, dest_str, errno);
         }
     }
 
