@@ -333,7 +333,7 @@ send_thread(
         r = sendto(send_sock, &echo_request, sizeof(icmphdr_t), 0, (struct sockaddr *) &dest_addr, dest_addr_len);
         if (r == -1)
         {
-            logger("sendto error: %d\n", errno);
+            logger("%s%s: sendto error: %d\n", identifier, dest_str, errno);
         }
 
         next_slot = (next_slot + 1) % array_size;
@@ -366,7 +366,7 @@ recv_thread(
         packet_len = recvfrom(recv_sock, &packet, sizeof(packet), 0, (struct sockaddr *) &src_addr, &src_addr_len);
         if (packet_len == (unsigned int) -1)
         {
-            logger("recvfrom error: %d\n", errno);
+            logger("%s%s: recvfrom error: %d\n", identifier, dest_str, errno);
             continue;
         }
         clock_gettime(CLOCK_MONOTONIC, &now);
@@ -379,7 +379,7 @@ recv_thread(
             // With IPv4, we get the entire IP packet
             if (packet_len < sizeof(struct ip))
             {
-                logger("received packet too small for IP header\n");
+                logger("%s%s: received packet too small for IP header\n", identifier, dest_str);
                 continue;
             }
             ip = (void *) packet;
@@ -397,7 +397,7 @@ recv_thread(
         // This should never happen
         if (packet_len < sizeof(icmphdr_t))
         {
-            logger("received packet too small for ICMP header\n");
+            logger("%s%s: received packet too small for ICMP header\n", identifier, dest_str);
             continue;
         }
 
@@ -410,7 +410,7 @@ recv_thread(
         array_slot = ntohs(icmp->sequence) % array_size;
         if (array[array_slot].status == PACKET_STATUS_RECEIVED)
         {
-            logger("duplicate echo reply received\n");
+            logger("%s%s: duplicate echo reply received\n", identifier, dest_str);
             continue;
         }
 
