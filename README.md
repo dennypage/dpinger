@@ -55,3 +55,9 @@ Produce a report every 60 seconds and append it to /tmp/dpinger.out.
   Monitor IP address fe80::1 for latency and loss. Send echo requests every 200 milliseconds.
   Make current status available on demand via a Unix domain socket /tmp/igb1.status. Record
   process id in /run/dpinger.
+
+    dpinger -S -i Comcast -s 5s -t 600s -r 0 -L 10% -p /run/dpinger 8.8.8.8
+
+  Monitor IP address 8.8.8.8 for latency and loss. Send echo requests every five seconds and
+  average results over 10 minutes. Log alerts via syslog including identifier string "Comcast"
+  if average loss exceeds 10 percent. Record process id in /run/dpinger.
