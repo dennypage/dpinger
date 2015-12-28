@@ -38,6 +38,8 @@
 #include <fcntl.h>
 #include <signal.h>
 
+#include <netdb.h>
+#include <net/if.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
@@ -62,7 +64,8 @@ static unsigned int             flag_rewind = 0;
 static unsigned int             flag_syslog = 0;
 
 // String representation of target
-static char                     dest_str[INET6_ADDRSTRLEN];
+#define ADDR_STR_MAX            (INET6_ADDRSTRLEN + IF_NAMESIZE + 1)
+static char                     dest_str[ADDR_STR_MAX];
 
 // Time period over which we are averaging results in ms
 static unsigned long            time_period_msec = 25000;
@@ -824,8 +827,8 @@ parse_args(
     int                         argc,
     char * const                argv[])
 {
-    struct in_addr              addr;
-    struct in6_addr             addr6;
+    struct addrinfo             hint;
+    struct addrinfo *           addr_info;
     const char *                dest_arg;
     const char *                bind_arg = NULL;
     size_t                      len;
@@ -904,6 +907,7 @@ parse_args(
             {
                 fatal("invalid latency alarm threshold %s\n", optarg);
             }
+            latency_alarm_threshold_usec = latency_alarm_threshold_msec * 1000;
             break;
 
         case 'L':
@@ -956,15 +960,13 @@ parse_args(
         usage();
         fatal(NULL);
     }
+    dest_arg = argv[optind];
 
     // Ensure we have something to do: at least one of alarm, report, socket
     if (report_interval_msec == 0 && latency_alarm_threshold_msec == 0 && loss_alarm_threshold_percent == 0 && usocket_name == NULL)
     {
         fatal("no activity enabled\n");
     }
-
-    // Destination address
-    dest_arg = argv[optind];
 
     // Ensure we have something to average over
     if (time_period_msec < send_interval_msec)
@@ -979,61 +981,50 @@ parse_args(
         fatal("ratio of time period to send interval cannot exceed 65536:1\n");
     }
 
-    // Check for an IPv4 address
-    r = inet_pton(AF_INET, dest_arg, &addr);
-    if (r)
+    // Check destination address
+    memset(&hint, 0, sizeof(struct addrinfo));
+    hint.ai_flags = AI_NUMERICHOST;
+    hint.ai_family = AF_UNSPEC;
+    hint.ai_socktype = SOCK_RAW;
+
+    r = getaddrinfo(dest_arg, NULL, &hint, &addr_info);
+    if (r != 0)
     {
-        struct sockaddr_in * dest = (struct sockaddr_in *) &dest_addr;
-        dest->sin_family = AF_INET;
-        dest->sin_addr = addr;
-        dest_addr_len = sizeof(struct sockaddr_in);
-
-        if (bind_arg)
-        {
-            r = inet_pton(AF_INET, bind_arg, &addr);
-            if (r == 0)
-            {
-                fatal("Invalid bind IP address %s\n", bind_arg);
-            }
-
-            struct sockaddr_in * bind4 = (struct sockaddr_in *) &bind_addr;
-            bind4->sin_family = AF_INET;
-            bind4->sin_addr = addr;
-            bind_addr_len = sizeof(struct sockaddr_in);
-        }
+        fatal("invalid destination IP address %s\n", dest_arg);
     }
-    else
+
+    if (addr_info->ai_family == AF_INET6)
     {
-        // Perhaps it's an IPv6 address?
-        r = inet_pton(AF_INET6, dest_arg, &addr6);
-        if (r == 0)
-        {
-            fatal("Invalid destination IP address %s\n", dest_arg);
-        }
-
-        struct sockaddr_in6 * dest6 = (struct sockaddr_in6 *) &dest_addr;
-        dest6->sin6_family = AF_INET6;
-        dest6->sin6_addr = addr6;
-        dest_addr_len = sizeof(struct sockaddr_in6);
-
         af_family = AF_INET6;
         ip_proto = IPPROTO_ICMPV6;
         echo_request_type = ICMP6_ECHO_REQUEST;
         echo_reply_type = ICMP6_ECHO_REPLY;
+    }
+    else if (addr_info->ai_family != AF_INET)
+    {
+        fatal("invalid destination IP address %s\n", dest_arg);
+    }
 
-        if (bind_arg)
+
+    dest_addr_len = addr_info->ai_addrlen;
+    memcpy(&dest_addr, addr_info->ai_addr, dest_addr_len);
+    freeaddrinfo(addr_info);
+
+    // Check bind address
+    if (bind_arg)
+    {
+        // Address family must match
+        hint.ai_family = af_family;
+
+        r = getaddrinfo(bind_arg, NULL, &hint, &addr_info);
+        if (r != 0)
         {
-            r = inet_pton(AF_INET6, bind_arg, &addr6);
-            if (r == 0)
-            {
-                fatal("Invalid source IP address %s\n", bind_arg);
-            }
-
-            struct sockaddr_in6 * bind6 = (struct sockaddr_in6 *) &bind_addr;
-            bind6->sin6_family = AF_INET6;
-            bind6->sin6_addr = addr6;
-            bind_addr_len = sizeof(struct sockaddr_in6);
+           fatal("invalid bind IP address %s\n", bind_arg);
         }
+
+        bind_addr_len = addr_info->ai_addrlen;
+        memcpy(&bind_addr, addr_info->ai_addr, bind_addr_len);
+        freeaddrinfo(addr_info);
     }
 }
 
@@ -1046,9 +1037,7 @@ main(
     int                         argc,
     char                        *argv[])
 {
-    char                        bind_str[INET6_ADDRSTRLEN] = "(none)";
-    const void *                addr;
-    const char *                p;
+    char                        bind_str[ADDR_STR_MAX] = "(none)";
     int                         pidfile_fd;
     pthread_t                   thread;
     struct                      sigaction act;
@@ -1227,50 +1216,30 @@ main(
     // Set the default loss interval
     if (loss_interval_msec == 0)
     {
-        loss_interval_msec = send_interval_msec * 2;
+        loss_interval_msec = send_interval_msec * 4;
     }
+    loss_interval_usec = loss_interval_msec * 1000;
 
-    // Log our parameters
-    if (af_family == AF_INET)
+    // Log our general parameters
+    r = getnameinfo((struct sockaddr *) &dest_addr, dest_addr_len, dest_str, sizeof(dest_str), NULL, 0, NI_NUMERICHOST);
+    if (r != 0)
     {
-        addr = (const void *) &((struct sockaddr_in *) &dest_addr)->sin_addr;
-    }
-    else
-    {
-        addr = (const void *) &((struct sockaddr_in6 *) &dest_addr)->sin6_addr;
-    }
-    p = inet_ntop(af_family, addr, dest_str, sizeof(dest_str));
-    if (p == NULL)
-    {
-        fatal("inet_ntop of destination address failed\n");
+        fatal("getnameinfo of destination address failed\n");
     }
 
     if (bind_addr_len)
     {
-        if (af_family == AF_INET)
+        r = getnameinfo((struct sockaddr *) &bind_addr, bind_addr_len, bind_str, sizeof(bind_str), NULL, 0, NI_NUMERICHOST);
+        if (r != 0)
         {
-            addr = (const void *) &((struct sockaddr_in *) &bind_addr)->sin_addr;
-        }
-        else
-        {
-            addr = (const void *) &((struct sockaddr_in6 *) &bind_addr)->sin6_addr;
-        }
-        p = inet_ntop(af_family, addr, bind_str, sizeof(bind_str));
-        if (p == NULL)
-        {
-            fatal("inet_ntop of bind address failed\n");
+            fatal("getnameinfo of bind address failed\n");
         }
     }
 
-    // Log our general parameters
     logger("send_interval %lums  loss_interval %lums  time_period %lums  report_interval %lums  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s  identifier \"%s\"\n",
            send_interval_msec, loss_interval_msec, time_period_msec, report_interval_msec,
            alert_interval_msec, latency_alarm_threshold_msec, loss_alarm_threshold_percent,
            dest_str, bind_str, identifier);
-
-    // Convert loss interval and alarm threshold to microseconds
-    loss_interval_usec = loss_interval_msec * 1000;
-    latency_alarm_threshold_usec = latency_alarm_threshold_msec * 1000;
 
     // Set my echo id
     echo_id = htons(getpid());
