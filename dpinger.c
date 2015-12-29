@@ -52,6 +52,13 @@
 #include <pthread.h>
 #include <syslog.h>
 
+// Temporary to allow building on old systems (FreeBSD 9.3, Linux 2.6.26)
+// FIXME: remove December 31, 2016
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC 0
+#endif
+
+
 // Who we are
 static const char *             progname;
 
