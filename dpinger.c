@@ -1084,7 +1084,7 @@ main(
     // Create report file
     if (report_name)
     {
-        report_fd = open(report_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        report_fd = open(report_name, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
         if (report_fd == -1)
         {
             perror("open");
