@@ -52,11 +52,16 @@
 #include <pthread.h>
 #include <syslog.h>
 
-// Temporary to allow building on old systems (FreeBSD 9.3, Linux 2.6.26)
-// FIXME: remove December 31, 2016
-#ifndef SOCK_CLOEXEC
-#define SOCK_CLOEXEC 0
-#endif
+// TODO:
+//
+// After December 31st, 2016, review use of fcntl() for setting non blocking
+// and close on exec. It would be preferable to use accept4(), SOCK_CLOEXEC
+// and SOCK_NONBLOCK. These are currently avoided to allow use on older
+// systems such as FreeBSD 9.3, Linux 2.6.26.
+// For Linux accept4() currently requires defining _GNU_SOURCE which we would
+// like to avoid.
+// For FreeBSD, these definitions were introduced with FreeBSD 10.0 and are
+// not present in 9.3 which is supported through 2016.
 
 
 // Who we are
@@ -672,6 +677,7 @@ usocket_thread(
     while (1)
     {
         sock_fd = accept(usocket_fd, NULL, NULL);
+        (void) fcntl(sock_fd, F_SETFL, FD_CLOEXEC);
         (void) fcntl(sock_fd, F_SETFL, fcntl(sock_fd, F_GETFL, 0) | O_NONBLOCK);
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
@@ -1060,12 +1066,15 @@ main(
         perror("socket");
         fatal("cannot create send socket\n");
     }
+    (void) fcntl(send_sock, F_SETFL, FD_CLOEXEC);
+
     recv_sock = socket(af_family, SOCK_RAW, ip_proto);
     if (recv_sock == -1)
     {
         perror("socket");
         fatal("cannot create recv socket\n");
     }
+    (void) fcntl(recv_sock, F_SETFL, FD_CLOEXEC);
 
     // Bind our sockets to an address if requested
     if (bind_addr_len)
@@ -1113,12 +1122,13 @@ main(
             fatal("socket name too large\n");
         }
 
-        usocket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        usocket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (usocket_fd == -1)
         {
             perror("socket");
             fatal("cannot create unix domain socket\n");
         }
+        (void) fcntl(usocket_fd, F_SETFL, FD_CLOEXEC);
 
         (void) unlink(usocket_name);
 
@@ -1150,7 +1160,7 @@ main(
     // Create pid file
     if (pidfile_name)
     {
-        pidfile_fd = open(pidfile_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        pidfile_fd = open(pidfile_name, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
         if (pidfile_fd == -1)
         {
             perror("open");
