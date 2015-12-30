@@ -80,7 +80,7 @@ static unsigned int             flag_syslog = 0;
 static char                     dest_str[ADDR_STR_MAX];
 
 // Time period over which we are averaging results in ms
-static unsigned long            time_period_msec = 25000;
+static unsigned long            time_period_msec = 30000;
 
 // Interval between sends in ms
 static unsigned long            send_interval_msec = 250;
@@ -788,8 +788,8 @@ usage(void)
     fprintf(stderr, "    -S log warnings via syslog\n");
     fprintf(stderr, "    -B bind (source) address\n");
     fprintf(stderr, "    -s time interval between echo requests (default 250ms)\n");
-    fprintf(stderr, "    -l time interval before packets are treated as lost (default 2x send interval)\n");
-    fprintf(stderr, "    -t time period over which results are averaged (default 25s)\n");
+    fprintf(stderr, "    -l time interval before packets are treated as lost (default 5x send interval)\n");
+    fprintf(stderr, "    -t time period over which results are averaged (default 30s)\n");
     fprintf(stderr, "    -r time interval between reports (default 1s)\n");
     fprintf(stderr, "    -o output file for reports (default stdout)\n");
     fprintf(stderr, "    -A time interval between alerts (default 1s)\n");
@@ -800,11 +800,13 @@ usage(void)
     fprintf(stderr, "    -u unix socket name for polling\n");
     fprintf(stderr, "    -p process id file name\n\n");
     fprintf(stderr, "  notes:\n");
+    fprintf(stderr, "    IP addresses can be in either IPv4 or IPv6 format\n\n");
     fprintf(stderr, "    time values can be expressed with a suffix of 'm' (milliseconds) or 's' (seconds)\n");
     fprintf(stderr, "    if no suffix is specified, milliseconds is the default\n\n");
-    fprintf(stderr, "    IP addresses can be in either IPv4 or IPv6 format\n\n");
     fprintf(stderr, "    the output format is \"latency_avg latency_stddev loss_pct\"\n");
-    fprintf(stderr, "    latency values are output in microseconds\n\n");
+    fprintf(stderr, "    latency values are output in microseconds\n");
+    fprintf(stderr, "    loss percentage is reported in whole numbers of 0-100\n");
+    fprintf(stderr, "    resolution of loss calculation is: 100 * send_interval / (time_period - loss_interval)\n\n");
     fprintf(stderr, "    the alert_cmd is invoked as \"alert_cmd dest_addr alarm_flag latency_avg loss_avg\"\n");
     fprintf(stderr, "    alarm_flag is set to 1 if either latency or loss is in alarm state\n");
     fprintf(stderr, "    alarm_flag will return to 0 when both have have cleared alarm state\n\n");
@@ -1051,7 +1053,7 @@ main(
     char                        *argv[])
 {
     char                        bind_str[ADDR_STR_MAX] = "(none)";
-    int                         pidfile_fd = 0;
+    int                         pidfile_fd = -1;
     pthread_t                   thread;
     struct                      sigaction act;
     int                         r;
@@ -1196,7 +1198,7 @@ main(
     sigaction(SIGINT, &act, NULL);
 
     // Write pid file
-    if (pidfile_name)
+    if (pidfile_fd != -1)
     {
         char                    buf[64];
         int                     len;
@@ -1214,7 +1216,7 @@ main(
             fatal("error writing pidfile\n");
         }
 
-        r= close(pidfile_fd);
+        r = close(pidfile_fd);
         if (r == -1)
         {
             perror("close");
@@ -1233,7 +1235,7 @@ main(
     // Set the default loss interval
     if (loss_interval_msec == 0)
     {
-        loss_interval_msec = send_interval_msec * 4;
+        loss_interval_msec = send_interval_msec * 5;
     }
     loss_interval_usec = loss_interval_msec * 1000;
 
