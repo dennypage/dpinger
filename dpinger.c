@@ -1051,7 +1051,7 @@ main(
     char                        *argv[])
 {
     char                        bind_str[ADDR_STR_MAX] = "(none)";
-    int                         pidfile_fd;
+    int                         pidfile_fd = 0;
     pthread_t                   thread;
     struct                      sigaction act;
     int                         r;
