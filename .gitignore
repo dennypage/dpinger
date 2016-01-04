@@ -1,2 +1,5 @@
 /dpinger
+/dpinger.debug
+/dpinger.full
 /dpinger.o
+/.*.swp
