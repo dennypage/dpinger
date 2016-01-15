@@ -343,13 +343,13 @@ send_thread(
         array[next_slot].status = PACKET_STATUS_EMPTY;
         sched_yield();
         clock_gettime(CLOCK_MONOTONIC, &array[next_slot].time_sent);
-        array[next_slot].status = PACKET_STATUS_SENT;
 
         r = sendto(send_sock, &echo_request, sizeof(icmphdr_t), 0, (struct sockaddr *) &dest_addr, dest_addr_len);
         if (r == -1)
         {
             logger("%s%s: sendto error: %d\n", identifier, dest_str, errno);
         }
+        array[next_slot].status = PACKET_STATUS_SENT;
 
         next_slot = (next_slot + 1) % array_size;
         next_sequence = (next_sequence + 1) % sequence_limit;
@@ -450,6 +450,7 @@ report(
     struct timespec             now;
     unsigned long               packets_received = 0;
     unsigned long               packets_lost = 0;
+    unsigned long               latency_usec = 0;
     unsigned long               total_latency_usec = 0;
     unsigned long long          total_latency_usec2 = 0;
     unsigned int                slot;
@@ -463,8 +464,9 @@ report(
         if (array[slot].status == PACKET_STATUS_RECEIVED)
         {
             packets_received++;
-            total_latency_usec += array[slot].latency_usec;
-            total_latency_usec2 += array[slot].latency_usec * array[slot].latency_usec;
+            latency_usec = array[slot].latency_usec;
+            total_latency_usec += latency_usec;
+            total_latency_usec2 += latency_usec * latency_usec;
         }
         else if (array[slot].status == PACKET_STATUS_SENT &&
                  ts_elapsed_usec(&array[slot].time_sent, &now) > loss_interval_usec)
@@ -731,7 +733,7 @@ get_time_arg_msec(
     else if (*suffix == 's')
     {
         // Seconds
-        *value *= 1000;
+        t *= 1000;
         suffix++;
     }
 
