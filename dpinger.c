@@ -479,10 +479,12 @@ report(
 
     if (packets_received)
     {
-        *average_latency_usec = total_latency_usec / packets_received;
+        unsigned long           avg = total_latency_usec / packets_received;
+        unsigned long long      avg2 = total_latency_usec2 / packets_received;
 
-        // sqrt( (sum(rtt^2) / packets) - (sum(rtt) / packets)^2)
-        *latency_deviation = llsqrt((total_latency_usec2 / packets_received) - (total_latency_usec / packets_received) * (total_latency_usec / packets_received));
+        // stddev = sqrt((sum(rtt^2) / packets) - (sum(rtt) / packets)^2)
+        *average_latency_usec = avg;
+        *latency_deviation = llsqrt(avg2 - (avg * avg));
     }
     else
     {
