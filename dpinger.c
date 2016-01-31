@@ -1,6 +1,6 @@
 
 //
-// Copyright (c) 2015, Denny Page
+// Copyright (c) 2015-2016, Denny Page
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -175,8 +175,16 @@ typedef struct
     uint16_t                    sequence;
 } icmphdr_t;
 
-// Echo request header for sendto
-static icmphdr_t                echo_request;
+// Echo request/reply packet buffers
+#define IPV4_ICMP_DATA_MAX      (IP_MAXPACKET - sizeof(struct ip) - sizeof(icmphdr_t))
+#define IPV6_ICMP_DATA_MAX      (IP_MAXPACKET - sizeof(icmphdr_t))
+#define PACKET_BUFLEN           (IP_MAXPACKET + 256)
+
+unsigned long                   echo_data_len = 0;
+static unsigned int             echo_request_len = sizeof(icmphdr_t);
+static unsigned int             echo_reply_len = IP_MAXPACKET;
+static icmphdr_t *              echo_request;
+static void *                   echo_reply;
 
 // Echo id and Sequence information
 static uint16_t                 echo_id;
@@ -319,9 +327,10 @@ send_thread(
     int                         r;
 
     // Set up our echo request packet
-    echo_request.type = echo_request_type;
-    echo_request.code = 0;
-    echo_request.id = echo_id;
+    memset(echo_request, 0, echo_request_len);
+    echo_request->type = echo_request_type;
+    echo_request->code = 0;
+    echo_request->id = echo_id;
 
     // Set up the timespec for nanosleep
     sleeptime.tv_sec = send_interval_msec / 1000;
@@ -336,15 +345,15 @@ send_thread(
         }
 
         // Set sequence number and checksum
-        echo_request.sequence = htons(next_sequence);
-        echo_request.cksum = 0;
-        echo_request.cksum = cksum((uint16_t *) &echo_request, sizeof(icmphdr_t));
+        echo_request->sequence = htons(next_sequence);
+        echo_request->cksum = 0;
+        echo_request->cksum = cksum((uint16_t *) echo_request, sizeof(icmphdr_t));
 
         array[next_slot].status = PACKET_STATUS_EMPTY;
         sched_yield();
         clock_gettime(CLOCK_MONOTONIC, &array[next_slot].time_sent);
 
-        r = sendto(send_sock, &echo_request, sizeof(icmphdr_t), 0, (struct sockaddr *) &dest_addr, dest_addr_len);
+        r = sendto(send_sock, echo_request, echo_request_len, 0, (struct sockaddr *) &dest_addr, dest_addr_len);
         if (r == -1)
         {
             logger("%s%s: sendto error: %d\n", identifier, dest_str, errno);
@@ -367,10 +376,9 @@ static void *
 recv_thread(
     void *                      arg)
 {
-    char                        packet[1024];
-    unsigned int                packet_len;
     struct sockaddr_storage     src_addr;
     socklen_t                   src_addr_len;
+    unsigned int                len;
     icmphdr_t *                 icmp;
     struct timespec             now;
     unsigned int                array_slot;
@@ -378,8 +386,8 @@ recv_thread(
     while (1)
     {
         src_addr_len = sizeof(src_addr);
-        packet_len = recvfrom(recv_sock, &packet, sizeof(packet), 0, (struct sockaddr *) &src_addr, &src_addr_len);
-        if (packet_len == (unsigned int) -1)
+        len = recvfrom(recv_sock, echo_reply, echo_reply_len, 0, (struct sockaddr *) &src_addr, &src_addr_len);
+        if (len == (unsigned int) -1)
         {
             logger("%s%s: recvfrom error: %d\n", identifier, dest_str, errno);
             continue;
@@ -392,25 +400,25 @@ recv_thread(
             size_t              ip_len;
 
             // With IPv4, we get the entire IP packet
-            if (packet_len < sizeof(struct ip))
+            if (len < sizeof(struct ip))
             {
                 logger("%s%s: received packet too small for IP header\n", identifier, dest_str);
                 continue;
             }
-            ip = (void *) packet;
+            ip = echo_reply;
             ip_len = ip->ip_hl << 2;
 
-            icmp = (void *) (packet + ip_len);
-            packet_len -= ip_len;
+            icmp = (void *) ip + ip_len;
+            len -= ip_len;
         }
         else
         {
             // With IPv6, we just get the ICMP payload
-            icmp = (void *) (packet);
+            icmp = echo_reply;
         }
 
         // This should never happen
-        if (packet_len < sizeof(icmphdr_t))
+        if (len < sizeof(icmphdr_t))
         {
             logger("%s%s: received packet too small for ICMP header\n", identifier, dest_str);
             continue;
@@ -779,13 +787,48 @@ get_percent_arg(
 
 
 //
+// Decode a byte length argument
+//
+static int
+get_length_arg(
+    const char *                arg,
+    unsigned long *             value)
+{
+    unsigned long               t;
+    char *                      suffix;
+
+    t = strtoul(arg, &suffix, 10);
+    if (*suffix == 'b')
+    {
+        // Bytes
+        suffix++;
+    }
+    else if (*suffix == 'k')
+    {
+        // Kilobytes
+        t *= 1024;
+        suffix++;
+    }
+
+    // Garbage in the number?
+    if (*suffix != 0)
+    {
+        return 1;
+    }
+
+    *value = t;
+    return 0;
+}
+
+
+//
 // Output usage
 //
 static void
 usage(void)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-f] [-R] [-S] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-f] [-R] [-S] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -f run in foreground\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
@@ -795,6 +838,7 @@ usage(void)
     fprintf(stderr, "    -l time interval before packets are treated as lost (default 5x send interval)\n");
     fprintf(stderr, "    -t time period over which results are averaged (default 30s)\n");
     fprintf(stderr, "    -r time interval between reports (default 1s)\n");
+    fprintf(stderr, "    -d data length (default 0)\n");
     fprintf(stderr, "    -o output file for reports (default stdout)\n");
     fprintf(stderr, "    -A time interval between alerts (default 1s)\n");
     fprintf(stderr, "    -D time threshold for latency alarm (default none)\n");
@@ -856,7 +900,7 @@ parse_args(
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "fRSB:s:l:t:r:o:A:D:L:C:i:u:p:")) != -1)
+    while((opt = getopt(argc, argv, "fRSB:s:l:t:r:d:o:A:D:L:C:i:u:p:")) != -1)
     {
         switch (opt)
         {
@@ -908,6 +952,14 @@ parse_args(
             }
             break;
 
+        case 'd':
+            r = get_length_arg(optarg, &echo_data_len);
+            if (r)
+            {
+                fatal("invalid data length %s\n", optarg);
+            }
+            break;
+
         case 'o':
             report_name = optarg;
             break;
@@ -939,7 +991,7 @@ parse_args(
 
         case 'C':
             alert_cmd_offset = strlen(optarg);
-            alert_cmd = malloc (alert_cmd_offset + OUTPUT_MAX);
+            alert_cmd = malloc(alert_cmd_offset + OUTPUT_MAX);
             if (alert_cmd == NULL)
             {
                 fatal("malloc of alert command buffer failed\n");
@@ -1045,6 +1097,27 @@ parse_args(
         memcpy(&bind_addr, addr_info->ai_addr, bind_addr_len);
         freeaddrinfo(addr_info);
     }
+
+    // Check requested data length
+    if (echo_data_len)
+    {
+        if (af_family == AF_INET)
+        {
+            if (echo_data_len > IPV4_ICMP_DATA_MAX)
+            {
+                fatal("data length too large for IPv4 - maximum is %u bytes\n", IPV4_ICMP_DATA_MAX);
+            }
+        }
+        else
+        {
+            if (echo_data_len > IPV6_ICMP_DATA_MAX)
+            {
+                fatal("data length too large for IPv6 - maximum is %u bytes\n", IPV6_ICMP_DATA_MAX);
+            }
+        }
+
+        echo_request_len += echo_data_len;
+    }
 }
 
 
@@ -1060,6 +1133,7 @@ main(
     int                         pidfile_fd = -1;
     pthread_t                   thread;
     struct                      sigaction act;
+    int                         buflen = PACKET_BUFLEN;
     int                         r;
 
     // Handle command line args
@@ -1073,6 +1147,7 @@ main(
         fatal("cannot create send socket\n");
     }
     (void) fcntl(send_sock, F_SETFL, FD_CLOEXEC);
+    (void) setsockopt(send_sock, SOL_SOCKET, SO_SNDBUF, &buflen, sizeof(buflen));
 
     recv_sock = socket(af_family, SOCK_RAW, ip_proto);
     if (recv_sock == -1)
@@ -1081,6 +1156,7 @@ main(
         fatal("cannot create recv socket\n");
     }
     (void) fcntl(recv_sock, F_SETFL, FD_CLOEXEC);
+    (void) setsockopt(recv_sock, SOL_SOCKET, SO_RCVBUF, &buflen, sizeof(buflen));
 
     // Bind our sockets to an address if requested
     if (bind_addr_len)
@@ -1236,6 +1312,14 @@ main(
         fatal("calloc of packet array failed\n");
     }
 
+    // Allocate the echo request/reply packet buffers
+    echo_request = (icmphdr_t *) malloc(echo_request_len);
+    echo_reply = malloc(echo_reply_len);
+    if (echo_request == NULL || echo_reply == NULL)
+    {
+        fatal("malloc of packet buffers failed\n");
+    }
+
     // Set the default loss interval
     if (loss_interval_msec == 0)
     {
@@ -1259,8 +1343,8 @@ main(
         }
     }
 
-    logger("send_interval %lums  loss_interval %lums  time_period %lums  report_interval %lums  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s  identifier \"%s\"\n",
-           send_interval_msec, loss_interval_msec, time_period_msec, report_interval_msec,
+    logger("send_interval %lums  loss_interval %lums  time_period %lums  report_interval %lums  data_len %lu  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s  identifier \"%s\"\n",
+           send_interval_msec, loss_interval_msec, time_period_msec, report_interval_msec, echo_data_len,
            alert_interval_msec, latency_alarm_threshold_msec, loss_alarm_threshold_percent,
            dest_str, bind_str, identifier);
 
