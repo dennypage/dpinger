@@ -150,8 +150,8 @@ static int                      recv_sock;
 
 // IPv4 / IPv6 parameters
 static uint16_t                 af_family = AF_INET;                    // IPv6: AF_INET6
-static uint16_t                 echo_request_type = ICMP_ECHO;          // IPv6: ICMP6_ECHO_REQUEST
-static uint16_t                 echo_reply_type = ICMP_ECHOREPLY;       // IPv6: ICMP6_ECHO_REPLY
+static uint8_t                  echo_request_type = ICMP_ECHO;          // IPv6: ICMP6_ECHO_REQUEST
+static uint8_t                  echo_reply_type = ICMP_ECHOREPLY;       // IPv6: ICMP6_ECHO_REPLY
 static int                      ip_proto = IPPROTO_ICMP;                // IPv6: IPPROTO_ICMPV6
 
 // Destination address
@@ -262,7 +262,7 @@ cksum(
     sum = (sum >> 16) + (sum & 0xFFFF);
     sum += (sum >> 16);
 
-    return ~sum;
+    return (uint16_t) ~sum;
 }
 
 
@@ -378,7 +378,7 @@ recv_thread(
 {
     struct sockaddr_storage     src_addr;
     socklen_t                   src_addr_len;
-    unsigned int                len;
+    size_t                      len;
     icmphdr_t *                 icmp;
     struct timespec             now;
     unsigned int                array_slot;
@@ -406,7 +406,7 @@ recv_thread(
                 continue;
             }
             ip = echo_reply;
-            ip_len = ip->ip_hl << 2;
+            ip_len = (size_t) ip->ip_hl << 2;
 
             icmp = (void *) ((char *) ip + ip_len);
             len -= ip_len;
@@ -1305,7 +1305,7 @@ main(
     }
 
     // Create the array
-    array_size = time_period_msec / send_interval_msec;
+    array_size = (unsigned int) (time_period_msec / send_interval_msec);
     array = calloc(array_size, sizeof(*array));
     if (array == NULL)
     {
@@ -1352,10 +1352,10 @@ main(
     echo_id = htons(getpid());
 
     // Set the limit for sequence number to ensure a multiple of array size
-    sequence_limit = array_size;
+    sequence_limit = (uint16_t) array_size;
     while ((sequence_limit & 0x8000) == 0)
     {
-        sequence_limit = sequence_limit << 1;
+        sequence_limit <<= 1;
     }
 
     // Create recv thread
