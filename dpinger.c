@@ -180,7 +180,7 @@ typedef struct
 #define IPV6_ICMP_DATA_MAX      (IP_MAXPACKET - sizeof(icmphdr_t))
 #define PACKET_BUFLEN           (IP_MAXPACKET + 256)
 
-unsigned long                   echo_data_len = 0;
+static unsigned long            echo_data_len = 0;
 static unsigned int             echo_request_len = sizeof(icmphdr_t);
 static unsigned int             echo_reply_len = IP_MAXPACKET;
 static icmphdr_t *              echo_request;
@@ -408,7 +408,7 @@ recv_thread(
             ip = echo_reply;
             ip_len = ip->ip_hl << 2;
 
-            icmp = (void *) ip + ip_len;
+            icmp = (void *) ((char *) ip + ip_len);
             len -= ip_len;
         }
         else
