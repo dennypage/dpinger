@@ -558,8 +558,8 @@ report_thread(
 
         if (flag_rewind)
         {
-            ftruncate(report_fd, len);
-            lseek(report_fd, SEEK_SET, 0);
+            (void) ftruncate(report_fd, len);
+            (void) lseek(report_fd, SEEK_SET, 0);
         }
     }
 }
@@ -1209,7 +1209,6 @@ main(
             fatal("cannot create unix domain socket\n");
         }
         (void) fcntl(usocket_fd, F_SETFL, FD_CLOEXEC);
-
         (void) unlink(usocket_name);
 
         memset(&uaddr, 0, sizeof(uaddr));
@@ -1272,8 +1271,8 @@ main(
     // Termination handler
     memset(&act, 0, sizeof(act));
     act.sa_handler = (void (*)(int)) term_handler;
-    sigaction(SIGTERM, &act, NULL);
-    sigaction(SIGINT, &act, NULL);
+    (void) sigaction(SIGTERM, &act, NULL);
+    (void) sigaction(SIGINT, &act, NULL);
 
     // Write pid file
     if (pidfile_fd != -1)
