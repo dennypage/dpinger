@@ -195,6 +195,7 @@ static uint16_t                 sequence_limit;
 //
 // Termination handler
 //
+__attribute__ ((noreturn))
 static void
 term_handler(void)
 {
@@ -214,10 +215,7 @@ term_handler(void)
 //
 // Log for abnormal events
 //
-#ifdef __GNUC__
-static void logger(const char * format, ...) __attribute__ ((format (printf, 1, 2)));
-#endif
-
+__attribute__ ((format (printf, 1, 2)))
 static void
 logger(
     const char *                format,
@@ -300,7 +298,7 @@ ts_elapsed_usec(
     const struct timespec *     old,
     const struct timespec *     new)
 {
-    unsigned long               r_usec;
+    long                        r_usec;
 
     // Note that we are using monotonic clock and time cannot run backwards
     if (new->tv_nsec >= old->tv_nsec)
@@ -312,18 +310,21 @@ ts_elapsed_usec(
         r_usec = (new->tv_sec - old->tv_sec - 1) * 1000000 + (1000000000 + new->tv_nsec - old->tv_nsec) / 1000;
     }
 
-    return r_usec;
+    return (unsigned long) r_usec;
 }
 
 
 //
 // Send thread
 //
+__attribute__ ((noreturn))
 static void *
 send_thread(
+    __attribute__ ((unused))
     void *                      arg)
 {
     struct timespec             sleeptime;
+    ssize_t                     len;
     int                         r;
 
     // Set up our echo request packet
@@ -353,8 +354,8 @@ send_thread(
         sched_yield();
         clock_gettime(CLOCK_MONOTONIC, &array[next_slot].time_sent);
 
-        r = sendto(send_sock, echo_request, echo_request_len, 0, (struct sockaddr *) &dest_addr, dest_addr_len);
-        if (r == -1)
+        len = sendto(send_sock, echo_request, echo_request_len, 0, (struct sockaddr *) &dest_addr, dest_addr_len);
+        if (len == -1)
         {
             logger("%s%s: sendto error: %d\n", identifier, dest_str, errno);
         }
@@ -363,22 +364,21 @@ send_thread(
         next_slot = (next_slot + 1) % array_size;
         next_sequence = (next_sequence + 1) % sequence_limit;
     }
-
-    // notreached
-    return arg;
 }
 
 
 //
 // Receive thread
 //
+__attribute__ ((noreturn))
 static void *
 recv_thread(
+    __attribute__ ((unused))
     void *                      arg)
 {
     struct sockaddr_storage     src_addr;
     socklen_t                   src_addr_len;
-    size_t                      len;
+    ssize_t                     len;
     icmphdr_t *                 icmp;
     struct timespec             now;
     unsigned int                array_slot;
@@ -387,7 +387,7 @@ recv_thread(
     {
         src_addr_len = sizeof(src_addr);
         len = recvfrom(recv_sock, echo_reply, echo_reply_len, 0, (struct sockaddr *) &src_addr, &src_addr_len);
-        if (len == (unsigned int) -1)
+        if (len == -1)
         {
             logger("%s%s: recvfrom error: %d\n", identifier, dest_str, errno);
             continue;
@@ -400,7 +400,7 @@ recv_thread(
             size_t              ip_len;
 
             // With IPv4, we get the entire IP packet
-            if (len < sizeof(struct ip))
+            if (len < (ssize_t) sizeof(struct ip))
             {
                 logger("%s%s: received packet too small for IP header\n", identifier, dest_str);
                 continue;
@@ -418,7 +418,7 @@ recv_thread(
         }
 
         // This should never happen
-        if (len < sizeof(icmphdr_t))
+        if (len < (ssize_t) sizeof(icmphdr_t))
         {
             logger("%s%s: received packet too small for ICMP header\n", identifier, dest_str);
             continue;
@@ -440,9 +440,6 @@ recv_thread(
         array[array_slot].latency_usec = ts_elapsed_usec(&array[array_slot].time_sent, &now);
         array[array_slot].status = PACKET_STATUS_RECEIVED;
     }
-
-    // notreached
-    return arg;
 }
 
 
@@ -514,8 +511,10 @@ report(
 //
 // Report thread
 //
+__attribute__ ((noreturn))
 static void *
 report_thread(
+    __attribute__ ((unused))
     void *                      arg)
 {
     char                        buf[OUTPUT_MAX];
@@ -523,7 +522,8 @@ report_thread(
     unsigned long               average_latency_usec;
     unsigned long               latency_deviation;
     unsigned long               average_loss_percent;
-    int                         len;
+    ssize_t                     len;
+    ssize_t                     rs;
     int                         r;
 
     // Set up the timespec for nanosleep
@@ -546,14 +546,14 @@ report_thread(
             logger("error formatting output in report thread\n");
         }
 
-        r = write(report_fd, buf, len);
-        if (r == -1)
+        rs = write(report_fd, buf, (size_t) len);
+        if (rs == -1)
         {
             logger("write error in report thread: %d\n", errno);
         }
-        else if (r != len)
+        else if (rs != len)
         {
-            logger("short write in report thread: %d/%d\n", r, len);
+            logger("short write in report thread: %zd/%zd\n", rs, len);
         }
 
         if (flag_rewind)
@@ -562,17 +562,16 @@ report_thread(
             lseek(report_fd, SEEK_SET, 0);
         }
     }
-
-    // notreached
-    return arg;
 }
 
 
 //
 // Alert thread
 //
+__attribute__ ((noreturn))
 static void *
 alert_thread(
+    __attribute__ ((unused))
     void *                      arg)
 {
     struct timespec             sleeptime;
@@ -666,16 +665,15 @@ alert_thread(
             }
         }
     }
-
-    // notreached
-    return arg;
 }
 
 //
 // Unix socket thread
 //
+__attribute__ ((noreturn))
 static void *
 usocket_thread(
+    __attribute__ ((unused))
     void *                      arg)
 {
     char                        buf[OUTPUT_MAX];
@@ -683,7 +681,8 @@ usocket_thread(
     unsigned long               latency_deviation;
     unsigned long               average_loss_percent;
     int                         sock_fd;
-    int                         len;
+    ssize_t                     len;
+    ssize_t                     rs;
     int                         r;
 
     while (1)
@@ -700,14 +699,14 @@ usocket_thread(
             logger("error formatting output in usocket thread\n");
         }
 
-        r = write(sock_fd, buf, len);
-        if (r == -1)
+        rs = write(sock_fd, buf, (size_t) len);
+        if (rs == -1)
         {
             logger("write error in usocket thread: %d\n", errno);
         }
-        else if (r != len)
+        else if (rs != len)
         {
-            logger("short write in usocket thread: %d/%d\n", r, len);
+            logger("short write in usocket thread: %zd/%zd\n", rs, len);
         }
 
         r = close(sock_fd);
@@ -716,9 +715,6 @@ usocket_thread(
             logger("close error in usocket thread: %d\n", errno);
         }
     }
-
-    // notreached
-    return arg;
 }
 
 
@@ -864,6 +860,7 @@ usage(void)
 //
 // Fatal error
 //
+__attribute__ ((noreturn, format (printf, 1, 2)))
 static void
 fatal(
     const char *                format,
@@ -1003,7 +1000,7 @@ parse_args(
             len = strlen(optarg);
             if (len >= sizeof(identifier) - 1)
             {
-                fatal("identifier argument too large (max %u bytes)\n", sizeof(identifier) - 1);
+                fatal("identifier argument too large (max %u bytes)\n", (unsigned) sizeof(identifier) - 1);
             }
             // optarg with a space appended
             memcpy(identifier, optarg, len);
@@ -1105,14 +1102,14 @@ parse_args(
         {
             if (echo_data_len > IPV4_ICMP_DATA_MAX)
             {
-                fatal("data length too large for IPv4 - maximum is %u bytes\n", IPV4_ICMP_DATA_MAX);
+                fatal("data length too large for IPv4 - maximum is %u bytes\n", (unsigned) IPV4_ICMP_DATA_MAX);
             }
         }
         else
         {
             if (echo_data_len > IPV6_ICMP_DATA_MAX)
             {
-                fatal("data length too large for IPv6 - maximum is %u bytes\n", IPV6_ICMP_DATA_MAX);
+                fatal("data length too large for IPv6 - maximum is %u bytes\n", (unsigned) IPV6_ICMP_DATA_MAX);
             }
         }
 
@@ -1134,6 +1131,7 @@ main(
     pthread_t                   thread;
     struct                      sigaction act;
     int                         buflen = PACKET_BUFLEN;
+    ssize_t                     rs;
     int                         r;
 
     // Handle command line args
@@ -1176,8 +1174,8 @@ main(
     }
 
     // Drop privileges
-    r = setgid(getgid());
-    r = setuid(getuid());
+    (void) setgid(getgid());
+    (void) setuid(getuid());
 
     // Create report file
     if (report_name)
@@ -1281,7 +1279,7 @@ main(
     if (pidfile_fd != -1)
     {
         char                    buf[64];
-        int                     len;
+        ssize_t                 len;
 
         len = snprintf(buf, sizeof(buf), "%u\n", (unsigned) getpid());
         if (len < 0 || (size_t) len > sizeof(buf))
@@ -1289,8 +1287,8 @@ main(
             fatal("error formatting pidfile\n");
         }
 
-        r = write(pidfile_fd, buf, len);
-        if (r == -1)
+        rs = write(pidfile_fd, buf, (size_t) len);
+        if (rs == -1)
         {
             perror("write");
             fatal("error writing pidfile\n");
@@ -1349,7 +1347,7 @@ main(
            dest_str, bind_str, identifier);
 
     // Set my echo id
-    echo_id = htons(getpid());
+    echo_id = htons((uint16_t) getpid());
 
     // Set the limit for sequence number to ensure a multiple of array size
     sequence_limit = (uint16_t) array_size;
