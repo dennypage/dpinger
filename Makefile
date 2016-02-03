@@ -1,12 +1,9 @@
 #CC=gcc
-#WARNINGS=-Wall -Wextra -Wformat=2
+#WARNINGS=-Wall -Wextra -Wformat=2 -Wno-unused-result
 
-#CC=clang
-#WARNINGS=-Weverything -Wno-padded -Wno-disabled-macro-expansion
+CC=clang
+WARNINGS=-Weverything -Wno-padded -Wno-disabled-macro-expansion
 
-#CC=ccc-analyzer
-#WARNINGS=
-
-CFLAGS=${WARNINGS} -pthread -g
+CFLAGS=${WARNINGS} -pthread -g -O2
 
 all: dpinger
