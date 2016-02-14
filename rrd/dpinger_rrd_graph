@@ -1,0 +1,130 @@
+#!/bin/sh
+
+if [ $# -ne 1 ]
+then
+    echo "usage: $0 name"
+    exit 1
+fi
+name="${1}"
+
+# Prefixes for rrd and png files. Note that if the prefix is a directory, it must incldue the trailing slash
+# If no value is set, the files are located in the current directory
+rrdprefix=
+pngprefix=/tmp/
+
+# Graph dimensions
+graph_height=240
+graph_width=720
+#graph_height=280
+#graph_width=840
+
+# Preferred font
+font="DejaVuSansMono"
+
+# Latency breakpoints in milliseconds
+latency_s0=20
+latency_s1=40
+latency_s2=80
+latency_s3=160
+latency_s4=320
+
+# Latency colors
+latency_c0="dddddd"
+latency_c1="ddbbbb"
+latency_c2="d4aaaa"
+latency_c3="cc9999"
+latency_c4="c38888"
+latency_c5="bb7777"
+
+# Standard deviation color & opacity
+stddev_c="55333355"
+
+# Loss color
+loss_c="ee0000"
+
+
+gen_graph()
+{
+    png=$1
+    rrd=$2
+    start=$3
+    end=$4
+    step=$5
+    description=$6
+
+    rrdtool graph "${png}" \
+        --lazy \
+        --start "${start}" --end "${end}" --step "${step}" \
+        --height "${graph_height}" --width "${graph_width}" \
+        --title "Average Latency and Packet Loss - ${description}" \
+        --disable-rrdtool-tag \
+        --color BACK#ffffff \
+        --font DEFAULT:9:"${font}" \
+        --font AXIS:8:"${font}" \
+        \
+        DEF:latency_us="${rrd}":latency:AVERAGE:step="${step}" \
+        CDEF:latency=latency_us,1000,/ \
+        CDEF:latency_s0=latency,${latency_s0},MIN \
+        CDEF:latency_s1=latency,${latency_s1},MIN \
+        CDEF:latency_s2=latency,${latency_s2},MIN \
+        CDEF:latency_s3=latency,${latency_s3},MIN \
+        CDEF:latency_s4=latency,${latency_s4},MIN \
+        VDEF:latency_min=latency,MINIMUM \
+        VDEF:latency_max=latency,MAXIMUM \
+        VDEF:latency_avg=latency,AVERAGE \
+        VDEF:latency_last=latency,LAST \
+        \
+        DEF:stddev_us="${rrd}":stddev:AVERAGE:step="${step}" \
+        CDEF:stddev=stddev_us,1000,/ \
+        VDEF:stddev_min=stddev,MINIMUM \
+        VDEF:stddev_max=stddev,MAXIMUM \
+        VDEF:stddev_avg=stddev,AVERAGE \
+        VDEF:stddev_last=stddev,LAST \
+        \
+        DEF:loss="${rrd}":loss:AVERAGE:step="${step}" \
+        CDEF:loss_neg=loss,-1,* \
+        VDEF:loss_min=loss,MINIMUM \
+        VDEF:loss_max=loss,MAXIMUM \
+        VDEF:loss_avg=loss,AVERAGE \
+        VDEF:loss_last=loss,LAST \
+        \
+        COMMENT:"                         Min              Max              Avg             Last\n" \
+        \
+        COMMENT:"     " \
+        AREA:latency#${latency_c5} \
+        AREA:latency_s4#${latency_c4} \
+        AREA:latency_s3#${latency_c3} \
+        AREA:latency_s2#${latency_c2} \
+        AREA:latency_s1#${latency_c1} \
+        AREA:latency_s0#${latency_c0} \
+        LINE1:latency#000000:"Latency  " \
+        GPRINT:"latency_min:%8.3lf ms\t" \
+        GPRINT:"latency_max:%8.3lf ms\t" \
+        GPRINT:"latency_avg:%8.3lf ms\t" \
+        GPRINT:"latency_last:%8.3lf ms\n" \
+        \
+        COMMENT:"     " \
+        LINE1:stddev#${stddev_c}:"Stddev   " \
+        GPRINT:"stddev_min:%8.3lf ms\t" \
+        GPRINT:"stddev_max:%8.3lf ms\t" \
+        GPRINT:"stddev_avg:%8.3lf ms\t" \
+        GPRINT:"stddev_last:%8.3lf ms\n" \
+        \
+        COMMENT:"     " \
+        AREA:loss_neg#${loss_c}:"Loss         " \
+        GPRINT:"loss_min:%4.1lf %%\t\t" \
+        GPRINT:"loss_max:%4.1lf %%\t\t" \
+        GPRINT:"loss_avg:%4.1lf %%\t\t" \
+        GPRINT:"loss_last:%4.1lf %%\n" \
+        \
+        COMMENT:" \n" \
+        GPRINT:"latency_last:Ending at %H\:%M on %B %d, %Y\r:strftime"
+}
+
+
+gen_graph "${pngprefix}${name}-1.png" "${rrdprefix}${name}.rrd" "now-8h" "now" "60" "Last 8 hours - 1 minute intervals"
+gen_graph "${pngprefix}${name}-2.png" "${rrdprefix}${name}.rrd" "now-36h" "now" "300" "Last 36 hours - 5 minute intervals"
+gen_graph "${pngprefix}${name}-3.png" "${rrdprefix}${name}.rrd" "now-8d" "now" "1800" "Last 8 days - 30 minute intervals"
+gen_graph "${pngprefix}${name}-4.png" "${rrdprefix}${name}.rrd" "now-60d" "now" "14400" "Last 60 days - 4 hour intervals"
+gen_graph "${pngprefix}${name}-5.png" "${rrdprefix}${name}.rrd" "now-1y" "now" "86400" "Last 1 year - 1 day intervals"
+gen_graph "${pngprefix}${name}-6.png" "${rrdprefix}${name}.rrd" "now-4y" "now" "86400" "Last 4 years - 1 day intervals"

@@ -1,0 +1,19 @@
+#!/bin/sh
+
+if [ $# -ne 1 ]
+then
+    echo "usage: $0 name"
+    exit 1
+fi
+name="$1"
+
+rrdfile="${name}.rrd"
+echo "Creating rrd file ${rrdfile}"
+
+rrdtool create "${rrdfile}" --step 1m \
+    DS:latency:GAUGE:5m:0:U \
+    DS:stddev:GAUGE:5m:0:U \
+    DS:loss:GAUGE:5m:0:100 \
+    RRA:AVERAGE:0.5:1m:15d \
+    RRA:AVERAGE:0.5:5m:90d \
+    RRA:AVERAGE:0.5:1h:3y

@@ -1,0 +1,22 @@
+#!/bin/sh
+
+if [ $# -lt 2 ]
+then
+    echo "usage: $0 rrdname targetip [dpinger options]"
+    exit 1
+fi
+name="$1"
+targetip="$2"
+shift 2
+options=$*
+
+# Where the dpinger executable is located
+dpinger=/usr/local/bin/dpinger
+
+
+rrdfile="${name}.rrd"
+
+${dpinger} -f ${options} -s 500m -t 60s -r 60s ${targetip} |
+while read -r latency stddev loss; do
+    rrdtool update "${rrdfile}" -t latency:stddev:loss "N:$latency:$stddev:$loss"
+done

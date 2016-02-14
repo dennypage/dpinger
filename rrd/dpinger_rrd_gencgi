@@ -1,0 +1,138 @@
+#!/bin/sh
+
+if [ $# -ne 1 ]
+then
+    echo "usage: $0 name"
+    exit 1
+fi
+name="${1}"
+
+# Prefixes for rrd and png files. Note that if the prefix is a directory, it must incldue the trailing slash
+# If no value is set, the files are located in the current directory when the cgi script runs
+rrdprefix=
+pngprefix=/tmp/
+
+
+# Graph dimensions
+#graph_height=240
+#graph_width=720
+graph_height=280
+graph_width=840
+
+# Preferred font
+font="DejaVuSansMono"
+
+# Latency breakpoints in milliseconds
+latency_s0=20
+latency_s1=40
+latency_s2=80
+latency_s3=160
+latency_s4=320
+
+# Latency colors
+latency_c0="dddddd"
+latency_c1="ddbbbb"
+latency_c2="d4aaaa"
+latency_c3="cc9999"
+latency_c4="c38888"
+latency_c5="bb7777"
+
+# Standard deviation color & opacity
+stddev_c="55333355"
+
+# Loss color
+loss_c="ee0000"
+
+
+gen_graph()
+{
+    png=$1
+    rrd=$2
+    start=$3
+    end=$4
+    step=$5
+    description=$6
+
+    echo "<RRD::GRAPH \"${png}\""
+        echo "--lazy"
+        echo "--start \"${start}\" --end \"${end}\" --step \"${step}\""
+        echo "--height ${graph_height} --width ${graph_width}"
+        echo "--title \"Average Latency and Packet Loss - ${description}\""
+        echo "--disable-rrdtool-tag"
+        echo "--color BACK#ffffff"
+        echo "--font DEFAULT:9:\"${font}\""
+        echo "--font AXIS:8:\"${font}\""
+
+        echo "DEF:latency_us=\"${rrd}\":latency:AVERAGE:step=\"${step}\""
+        echo "CDEF:latency=latency_us,1000,/"
+        echo "CDEF:latency_s0=latency,${latency_s0},MIN"
+        echo "CDEF:latency_s1=latency,${latency_s1},MIN"
+        echo "CDEF:latency_s2=latency,${latency_s2},MIN"
+        echo "CDEF:latency_s3=latency,${latency_s3},MIN"
+        echo "CDEF:latency_s4=latency,${latency_s4},MIN"
+        echo "VDEF:latency_min=latency,MINIMUM"
+        echo "VDEF:latency_max=latency,MAXIMUM"
+        echo "VDEF:latency_avg=latency,AVERAGE"
+        echo "VDEF:latency_last=latency,LAST"
+
+        echo "DEF:stddev_us=\"${rrd}\":stddev:AVERAGE:step=\"${step}\""
+        echo "CDEF:stddev=stddev_us,1000,/"
+        echo "VDEF:stddev_min=stddev,MINIMUM"
+        echo "VDEF:stddev_max=stddev,MAXIMUM"
+        echo "VDEF:stddev_avg=stddev,AVERAGE"
+        echo "VDEF:stddev_last=stddev,LAST"
+
+        echo "DEF:loss=\"${rrd}\":loss:AVERAGE:step=\"${step}\""
+        echo "CDEF:loss_neg=loss,-1,*"
+        echo "VDEF:loss_min=loss,MINIMUM"
+        echo "VDEF:loss_max=loss,MAXIMUM"
+        echo "VDEF:loss_avg=loss,AVERAGE"
+        echo "VDEF:loss_last=loss,LAST"
+
+        echo "COMMENT:\"                         Min              Max              Avg             Last\n\""
+
+        echo "COMMENT:\"     \""
+        echo "AREA:latency#${latency_c5}"
+        echo "AREA:latency_s4#${latency_c4}"
+        echo "AREA:latency_s3#${latency_c3}"
+        echo "AREA:latency_s2#${latency_c2}"
+        echo "AREA:latency_s1#${latency_c1}"
+        echo "AREA:latency_s0#${latency_c0}"
+        echo "LINE1:latency#000000:\"Latency  \""
+        echo "GPRINT:\"latency_min:%8.3lf ms\t\""
+        echo "GPRINT:\"latency_max:%8.3lf ms\t\""
+        echo "GPRINT:\"latency_avg:%8.3lf ms\t\""
+        echo "GPRINT:\"latency_last:%8.3lf ms\n\""
+
+        echo "COMMENT:\"     \""
+        echo "LINE1:stddev#${stddev_c}:\"Stddev   \""
+        echo "GPRINT:\"stddev_min:%8.3lf ms\t\""
+        echo "GPRINT:\"stddev_max:%8.3lf ms\t\""
+        echo "GPRINT:\"stddev_avg:%8.3lf ms\t\""
+        echo "GPRINT:\"stddev_last:%8.3lf ms\n\""
+
+        echo "COMMENT:\"     \""
+        echo "AREA:loss_neg#${loss_c}:\"Loss         \""
+        echo "GPRINT:\"loss_min:%4.1lf %%\t\t\""
+        echo "GPRINT:\"loss_max:%4.1lf %%\t\t\""
+        echo "GPRINT:\"loss_avg:%4.1lf %%\t\t\""
+        echo "GPRINT:\"loss_last:%4.1lf %%\n\""
+        echo "COMMENT:\" \n\""
+        echo "GPRINT:\"latency_last:Ending at %H\\:%M on %B %d, %Y\\r:strftime\""
+
+        echo ">"
+        echo "<p>"
+}
+
+
+echo "#!/usr/bin/rrdcgi"
+echo "<html> <head> <title>WAN Statistics (cgi)</title> </head> <body>"
+
+gen_graph "${pngprefix}${name}-1.png" "${rrdprefix}${name}.rrd" "now-8h" "now" "60" "Last 8 hours - 1 minute intervals"
+gen_graph "${pngprefix}${name}-2.png" "${rrdprefix}${name}.rrd" "now-36h" "now" "300" "Last 36 hours - 5 minute intervals"
+gen_graph "${pngprefix}${name}-3.png" "${rrdprefix}${name}.rrd" "now-8d" "now" "1800" "Last 8 days - 30 minute intervals"
+gen_graph "${pngprefix}${name}-4.png" "${rrdprefix}${name}.rrd" "now-60d" "now" "14400" "Last 60 days - 4 hour intervals"
+gen_graph "${pngprefix}${name}-5.png" "${rrdprefix}${name}.rrd" "now-1y" "now" "86400" "Last 1 year - 1 day intervals"
+gen_graph "${pngprefix}${name}-6.png" "${rrdprefix}${name}.rrd" "now-4y" "now" "86400" "Last 4 years - 1 day intervals"
+
+echo "</body> </html>"
