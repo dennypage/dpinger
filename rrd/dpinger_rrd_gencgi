@@ -124,15 +124,16 @@ gen_graph()
         echo "<p>"
 }
 
+(
+    echo "#!/usr/bin/rrdcgi"
+    echo "<html> <head> <title>WAN Statistics (cgi)</title> </head> <body>"
 
-echo "#!/usr/bin/rrdcgi"
-echo "<html> <head> <title>WAN Statistics (cgi)</title> </head> <body>"
+    gen_graph "${pngprefix}${name}-1.png" "${rrdprefix}${name}.rrd" "now-8h" "now" "60" "Last 8 hours - 1 minute intervals"
+    gen_graph "${pngprefix}${name}-2.png" "${rrdprefix}${name}.rrd" "now-36h" "now" "300" "Last 36 hours - 5 minute intervals"
+    gen_graph "${pngprefix}${name}-3.png" "${rrdprefix}${name}.rrd" "now-8d" "now" "1800" "Last 8 days - 30 minute intervals"
+    gen_graph "${pngprefix}${name}-4.png" "${rrdprefix}${name}.rrd" "now-60d" "now" "14400" "Last 60 days - 4 hour intervals"
+    gen_graph "${pngprefix}${name}-5.png" "${rrdprefix}${name}.rrd" "now-1y" "now" "86400" "Last 1 year - 1 day intervals"
+    gen_graph "${pngprefix}${name}-6.png" "${rrdprefix}${name}.rrd" "now-4y" "now" "86400" "Last 4 years - 1 day intervals"
 
-gen_graph "${pngprefix}${name}-1.png" "${rrdprefix}${name}.rrd" "now-8h" "now" "60" "Last 8 hours - 1 minute intervals"
-gen_graph "${pngprefix}${name}-2.png" "${rrdprefix}${name}.rrd" "now-36h" "now" "300" "Last 36 hours - 5 minute intervals"
-gen_graph "${pngprefix}${name}-3.png" "${rrdprefix}${name}.rrd" "now-8d" "now" "1800" "Last 8 days - 30 minute intervals"
-gen_graph "${pngprefix}${name}-4.png" "${rrdprefix}${name}.rrd" "now-60d" "now" "14400" "Last 60 days - 4 hour intervals"
-gen_graph "${pngprefix}${name}-5.png" "${rrdprefix}${name}.rrd" "now-1y" "now" "86400" "Last 1 year - 1 day intervals"
-gen_graph "${pngprefix}${name}-6.png" "${rrdprefix}${name}.rrd" "now-4y" "now" "86400" "Last 4 years - 1 day intervals"
-
-echo "</body> </html>"
+    echo "</body> </html>"
+) > "${name}.cgi"
