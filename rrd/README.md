@@ -2,22 +2,24 @@ Example scripts for creating RRD graphs with dpinger
 
 <br>
 
-dpinger_rrd_create <name>
+Files and Usage:
 
-    Create the rrd initial file.
+    dpinger_rrd_create <name>
 
-dpinger_rrd_update <name> <target> <additional dpinger options>
+Create the rrd initial file.
 
-    Updater script. Runs dpinger and feeds the rrd file.
+    dpinger_rrd_update <name> <target> <additional dpinger options>
 
-dpinger_rrd_gencgi <name>
+Daemon updater script. Runs dpinger and feeds the rrd file.
 
-    Generate a cgi script that displays graphs. The script is output to stdout.
+    dpinger_rrd_gencgi <name>
 
-dpinger_rrd_graph <name>
+Generate a cgi script that displays graphs.
 
-    Generate png files for use with static html
-  
-sample.html
+    dpinger_rrd_graph <name>
 
-    Sample static html to display graphs.
+Generate png files for use with static html
+
+    sample.html
+
+Sample static html to display graphs.
