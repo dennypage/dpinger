@@ -10,10 +10,21 @@ name="$1"
 rrdfile="${name}.rrd"
 echo "Creating rrd file ${rrdfile}"
 
-rrdtool create "${rrdfile}" --step 1m \
-    DS:latency:GAUGE:5m:0:U \
-    DS:stddev:GAUGE:5m:0:U \
-    DS:loss:GAUGE:5m:0:100 \
-    RRA:AVERAGE:0.5:1m:15d \
-    RRA:AVERAGE:0.5:5m:90d \
-    RRA:AVERAGE:0.5:1h:3y
+
+# Time duration method doesn't work in all versions of rrdtool
+#rrdtool create "${rrdfile}" --step 1m \
+#    DS:latency:GAUGE:5m:0:U \
+#    DS:stddev:GAUGE:5m:0:U \
+#    DS:loss:GAUGE:5m:0:100 \
+#    RRA:AVERAGE:0.5:1m:15d \
+#    RRA:AVERAGE:0.5:5m:90d \
+#    RRA:AVERAGE:0.5:1h:3y
+
+# This method works in all versions
+rrdtool create "${rrdfile}" --step 60 \
+    DS:latency:GAUGE:300:0:U \
+    DS:stddev:GAUGE:300:0:U \
+    DS:loss:GAUGE:300:0:100 \
+    RRA:AVERAGE:0.5:1:21600 \
+    RRA:AVERAGE:0.5:5:25920 \
+    RRA:AVERAGE:0.5:60:26352
