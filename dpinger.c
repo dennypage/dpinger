@@ -354,12 +354,12 @@ send_thread(
         sched_yield();
         clock_gettime(CLOCK_MONOTONIC, &array[next_slot].time_sent);
 
+        array[next_slot].status = PACKET_STATUS_SENT;
         len = sendto(send_sock, echo_request, echo_request_len, 0, (struct sockaddr *) &dest_addr, dest_addr_len);
         if (len == -1)
         {
             logger("%s%s: sendto error: %d\n", identifier, dest_str, errno);
         }
-        array[next_slot].status = PACKET_STATUS_SENT;
 
         next_slot = (next_slot + 1) % array_size;
         next_sequence = (next_sequence + 1) % sequence_limit;
