@@ -471,7 +471,7 @@ report(
             packets_received++;
             latency_usec = array[slot].latency_usec;
             total_latency_usec += latency_usec;
-            total_latency_usec2 += latency_usec * latency_usec;
+            total_latency_usec2 += (unsigned long long) latency_usec * latency_usec;
         }
         else if (array[slot].status == PACKET_STATUS_SENT &&
                  ts_elapsed_usec(&array[slot].time_sent, &now) > loss_interval_usec)
