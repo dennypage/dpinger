@@ -286,7 +286,7 @@ llsqrt(
         }
     }
 
-    return s;
+    return (unsigned long) s;
 }
 
 
@@ -489,7 +489,7 @@ report(
 
         // stddev = sqrt((sum(rtt^2) / packets) - (sum(rtt) / packets)^2)
         *average_latency_usec = avg;
-        *latency_deviation = llsqrt(avg2 - (avg * avg));
+        *latency_deviation = llsqrt(avg2 - ((unsigned long long) avg * avg));
     }
     else
     {
