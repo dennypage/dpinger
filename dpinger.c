@@ -81,10 +81,10 @@ static unsigned int             flag_priority = 0;
 static char                     dest_str[ADDR_STR_MAX];
 
 // Time period over which we are averaging results in ms
-static unsigned long            time_period_msec = 30000;
+static unsigned long            time_period_msec = 60000;
 
 // Interval between sends in ms
-static unsigned long            send_interval_msec = 250;
+static unsigned long            send_interval_msec = 500;
 
 // Interval before a sequence is initially treated as lost
 // Input from command line in ms and used in us
@@ -832,9 +832,9 @@ usage(void)
     fprintf(stderr, "    -S log warnings via syslog\n");
     fprintf(stderr, "    -P priority scheduling for receive thread (requires root)\n");
     fprintf(stderr, "    -B bind (source) address\n");
-    fprintf(stderr, "    -s time interval between echo requests (default 250ms)\n");
-    fprintf(stderr, "    -l time interval before packets are treated as lost (default 5x send interval)\n");
-    fprintf(stderr, "    -t time period over which results are averaged (default 30s)\n");
+    fprintf(stderr, "    -s time interval between echo requests (default 500ms)\n");
+    fprintf(stderr, "    -l time interval before packets are treated as lost (default 4x send interval)\n");
+    fprintf(stderr, "    -t time period over which results are averaged (default 60s)\n");
     fprintf(stderr, "    -r time interval between reports (default 1s)\n");
     fprintf(stderr, "    -d data length (default 0)\n");
     fprintf(stderr, "    -o output file for reports (default stdout)\n");
@@ -1039,17 +1039,17 @@ parse_args(
         fatal("no activity enabled\n");
     }
 
-    // Ensure we have something to average over
-    if (time_period_msec < send_interval_msec)
+    // Ensure there is a minimum of one resolved slot at all times
+    if (time_period_msec <= send_interval_msec * 2 + loss_interval_msec)
     {
-        fatal("time period cannot be less than send interval\n");
+        fatal("the time period must be greater than twice the send interval plus the loss interval\n");
     }
 
     // Ensure we don't have sequence space issues. This really should only be hit by
     // complete accident. Even a ratio of 16384:1 would be excessive.
     if (time_period_msec / send_interval_msec > 65536)
     {
-        fatal("ratio of time period to send interval cannot exceed 65536:1\n");
+        fatal("the ratio of time period to send interval cannot exceed 65536:1\n");
     }
 
     // Check destination address
@@ -1323,7 +1323,7 @@ main(
     // Set the default loss interval
     if (loss_interval_msec == 0)
     {
-        loss_interval_msec = send_interval_msec * 5;
+        loss_interval_msec = send_interval_msec * 4;
     }
     loss_interval_usec = loss_interval_msec * 1000;
 
