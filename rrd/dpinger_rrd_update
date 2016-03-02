@@ -15,6 +15,11 @@ dpinger=/usr/local/bin/dpinger
 
 
 rrdfile="${name}.rrd"
+if [ \! -w ${rrdfile} ]
+then
+    echo "$0: file \"${rrdfile}\" does not exist or is not writable"
+    exit 1
+fi
 
 ${dpinger} -f ${options} -s 500m -t 60s -r 60s ${targetip} |
 while read -r latency stddev loss; do
