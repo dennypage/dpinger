@@ -74,6 +74,7 @@ static const char *             pidfile_name = NULL;
 // Flags
 static unsigned int             flag_rewind = 0;
 static unsigned int             flag_syslog = 0;
+static unsigned int             flag_priority = 0;
 
 // String representation of target
 #define ADDR_STR_MAX            (INET6_ADDRSTRLEN + IF_NAMESIZE + 1)
@@ -352,8 +353,8 @@ send_thread(
 
         array[next_slot].status = PACKET_STATUS_EMPTY;
         sched_yield();
-        clock_gettime(CLOCK_MONOTONIC, &array[next_slot].time_sent);
 
+        clock_gettime(CLOCK_MONOTONIC, &array[next_slot].time_sent);
         array[next_slot].status = PACKET_STATUS_SENT;
         len = sendto(send_sock, echo_request, echo_request_len, 0, (struct sockaddr *) &dest_addr, dest_addr_len);
         if (len == -1)
@@ -824,11 +825,12 @@ static void
 usage(void)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-f] [-R] [-S] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -f run in foreground\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
     fprintf(stderr, "    -S log warnings via syslog\n");
+    fprintf(stderr, "    -P priority scheduling for receive thread (requires root)\n");
     fprintf(stderr, "    -B bind (source) address\n");
     fprintf(stderr, "    -s time interval between echo requests (default 250ms)\n");
     fprintf(stderr, "    -l time interval before packets are treated as lost (default 5x send interval)\n");
@@ -866,14 +868,11 @@ fatal(
     const char *                format,
     ...)
 {
-    if (format)
-    {
-        va_list                 args;
+    va_list                 args;
 
-        va_start(args, format);
-        vfprintf(stderr, format, args);
-        va_end(args);
-    }
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
 
     exit(EXIT_FAILURE);
 }
@@ -897,7 +896,7 @@ parse_args(
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "fRSB:s:l:t:r:d:o:A:D:L:C:i:u:p:")) != -1)
+    while((opt = getopt(argc, argv, "fRSPB:s:l:t:r:d:o:A:D:L:C:i:u:p:")) != -1)
     {
         switch (opt)
         {
@@ -911,6 +910,10 @@ parse_args(
 
         case 'S':
             flag_syslog = 1;
+            break;
+
+        case 'P':
+            flag_priority = 1;
             break;
 
         case 'B':
@@ -1018,7 +1021,7 @@ parse_args(
 
         default:
             usage();
-            fatal(NULL);
+            exit(EXIT_FAILURE);
         }
     }
 
@@ -1026,7 +1029,7 @@ parse_args(
     if (argc != optind + 1)
     {
         usage();
-        fatal(NULL);
+        exit(EXIT_FAILURE);
     }
     dest_arg = argv[optind];
 
@@ -1361,6 +1364,27 @@ main(
     {
         perror("pthread_create");
         fatal("cannot create recv thread\n");
+    }
+
+    // Set priority on recv thread if requested
+    if (flag_priority)
+    {
+        struct sched_param          thread_sched_param;
+
+        r = sched_get_priority_min(SCHED_RR);
+        if (r == -1)
+        {
+            perror("sched_get_priority_min");
+            fatal("cannot determin minimum shceduling priority for SCHED_RR\n");
+        }
+        thread_sched_param.sched_priority = r;
+
+        r = pthread_setschedparam(thread, SCHED_RR, &thread_sched_param);
+        if (r != 0)
+        {
+            perror("pthread_setschedparam");
+            fatal("cannot set receive thread priority\n");
+        }
     }
 
     // Create send thread
