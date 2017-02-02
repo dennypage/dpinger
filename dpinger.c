@@ -105,6 +105,9 @@ static unsigned long            latency_alarm_threshold_usec = 0;
 // Threshold for triggering alarms based on loss percentage
 static unsigned long            loss_alarm_threshold_percent = 0;
 
+// alarm state
+static unsigned int             alarm_on = 0;
+
 // Command to invoke for alerts
 static char *                   alert_cmd = NULL;
 static size_t                   alert_cmd_offset;
@@ -541,7 +544,7 @@ report_thread(
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
-        len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
+        len = snprintf(buf, sizeof(buf), "%s %lu %lu %lu %u\n", identifier, average_latency_usec, latency_deviation, average_loss_percent, alarm_on);
         if (len < 0 || (size_t) len > sizeof(buf))
         {
             logger("error formatting output in report thread\n");
@@ -582,7 +585,6 @@ alert_thread(
     unsigned int                latency_alarm_decay = 0;
     unsigned int                loss_alarm_decay = 0;
     unsigned int                alert = 0;
-    unsigned int                alarm_on;
     int                         r;
 
     // Set up the timespec for nanosleep
@@ -646,11 +648,11 @@ alert_thread(
             alert = 0;
 
             alarm_on = latency_alarm_decay || loss_alarm_decay;
-            logger("%s%s: %s latency %luus stddev %luus loss %lu%%\n", identifier, dest_str, alarm_on ? "Alarm" : "Clear", average_latency_usec, latency_deviation, average_loss_percent);
+            logger("%s %s: %s latency %luus stddev %luus loss %lu%%\n", identifier, dest_str, alarm_on ? "Alarm" : "Clear", average_latency_usec, latency_deviation, average_loss_percent);
 
             if (alert_cmd)
             {
-                r = snprintf(alert_cmd + alert_cmd_offset, OUTPUT_MAX, " %s%s %u %lu %lu %lu", identifier, dest_str, alarm_on, average_latency_usec, latency_deviation, average_loss_percent);
+                r = snprintf(alert_cmd + alert_cmd_offset, OUTPUT_MAX, " %s %s %u %lu %lu %lu", identifier, dest_str, alarm_on, average_latency_usec, latency_deviation, average_loss_percent);
                 if (r < 0 || (size_t) r >= OUTPUT_MAX)
                 {
                     logger("error formatting command in alert thread\n");
@@ -694,7 +696,7 @@ usocket_thread(
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
-        len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
+        len = snprintf(buf, sizeof(buf), "%s %lu %lu %lu %u\n", identifier, average_latency_usec, latency_deviation, average_loss_percent, alarm_on);
         if (len < 0 || (size_t) len > sizeof(buf))
         {
             logger("error formatting output in usocket thread\n");
