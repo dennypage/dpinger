@@ -39,8 +39,8 @@
 #include <signal.h>
 
 #include <netdb.h>
-#include <net/if.h>
 #include <sys/socket.h>
+#include <net/if.h>
 #include <sys/un.h>
 #include <sys/stat.h>
 #include <netinet/in.h>
