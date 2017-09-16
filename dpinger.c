@@ -744,7 +744,7 @@ get_time_arg_msec(
     }
 
     // Garbage in the number?
-    if (*suffix != 0)
+    if (strchr(arg, '-') || *suffix != 0)
     {
         return 1;
     }
@@ -772,7 +772,7 @@ get_percent_arg(
     }
 
     // Garbage in the number?
-    if (*suffix != 0 || t > 100)
+    if (strchr(arg, '-') || *suffix != 0 || t > 100)
     {
         return 1;
     }
@@ -807,7 +807,7 @@ get_length_arg(
     }
 
     // Garbage in the number?
-    if (*suffix != 0)
+    if (strchr(arg, '-') || *suffix != 0)
     {
         return 1;
     }
