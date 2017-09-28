@@ -743,10 +743,10 @@ get_time_arg_msec(
     const char *                arg,
     unsigned long *             value)
 {
-    unsigned long               t;
+    long                        t;
     char *                      suffix;
 
-    t = strtoul(arg, &suffix, 10);
+    t = strtol(arg, &suffix, 10);
     if (*suffix == 'm')
     {
         // Milliseconds
@@ -759,13 +759,13 @@ get_time_arg_msec(
         suffix++;
     }
 
-    // Garbage in the number?
-    if (*suffix != 0)
+    // Invalid specification?
+    if (t <= 0 || *suffix != 0)
     {
         return 1;
     }
 
-    *value = t;
+    *value = (unsigned long) t;
     return 0;
 }
 
@@ -778,22 +778,22 @@ get_percent_arg(
     const char *                arg,
     unsigned long *             value)
 {
-    unsigned long               t;
+    long                        t;
     char *                      suffix;
 
-    t = strtoul(arg, &suffix, 10);
+    t = strtol(arg, &suffix, 10);
     if (*suffix == '%')
     {
         suffix++;
     }
 
-    // Garbage in the number?
-    if (*suffix != 0 || t > 100)
+    // Invalid specification?
+    if (t <= 0 || t > 100 || *suffix != 0)
     {
         return 1;
     }
 
-    *value = t;
+    *value = (unsigned long) t;
     return 0;
 }
 
@@ -806,10 +806,10 @@ get_length_arg(
     const char *                arg,
     unsigned long *             value)
 {
-    unsigned long               t;
+    long                        t;
     char *                      suffix;
 
-    t = strtoul(arg, &suffix, 10);
+    t = strtol(arg, &suffix, 10);
     if (*suffix == 'b')
     {
         // Bytes
@@ -822,13 +822,13 @@ get_length_arg(
         suffix++;
     }
 
-    // Garbage in the number?
-    if (*suffix != 0)
+    // Invalid specification?
+    if (t < 0 || *suffix != 0)
     {
         return 1;
     }
 
-    *value = t;
+    *value = (unsigned long) t;
     return 0;
 }
 
@@ -937,7 +937,7 @@ parse_args(
 
         case 's':
             r = get_time_arg_msec(optarg, &send_interval_msec);
-            if (r || send_interval_msec == 0)
+            if (r)
             {
                 fatal("invalid send interval %s\n", optarg);
             }
@@ -945,7 +945,7 @@ parse_args(
 
         case 'l':
             r = get_time_arg_msec(optarg, &loss_interval_msec);
-            if (r || loss_interval_msec == 0)
+            if (r)
             {
                 fatal("invalid loss interval %s\n", optarg);
             }
@@ -953,7 +953,7 @@ parse_args(
 
         case 't':
             r = get_time_arg_msec(optarg, &time_period_msec);
-            if (r || time_period_msec == 0)
+            if (r)
             {
                 fatal("invalid averaging time period %s\n", optarg);
             }
@@ -981,7 +981,7 @@ parse_args(
 
         case 'A':
             r = get_time_arg_msec(optarg, &alert_interval_msec);
-            if (r || alert_interval_msec == 0)
+            if (r)
             {
                 fatal("invalid alert interval %s\n", optarg);
             }
@@ -989,7 +989,7 @@ parse_args(
 
         case 'D':
             r = get_time_arg_msec(optarg, &latency_alarm_threshold_msec);
-            if (r || latency_alarm_threshold_msec == 0)
+            if (r)
             {
                 fatal("invalid latency alarm threshold %s\n", optarg);
             }
@@ -998,7 +998,7 @@ parse_args(
 
         case 'L':
             r = get_percent_arg(optarg, &loss_alarm_threshold_percent);
-            if (r || loss_alarm_threshold_percent == 0)
+            if (r)
             {
                 fatal("invalid loss alarm threshold %s\n", optarg);
             }
