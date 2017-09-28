@@ -77,6 +77,9 @@ static char                     dest_str[ADDR_STR_MAX];
 // Time period over which we are averaging results in ms
 static unsigned long            time_period_msec = 60000;
 
+// Delay before first send at startup in ms
+static unsigned long            send_at_startup_delay_msec = 0;
+
 // Interval between sends in ms
 static unsigned long            send_interval_msec = 500;
 
@@ -328,18 +331,21 @@ send_thread(
     echo_request->code = 0;
     echo_request->id = echo_id;
 
+	// Send at startup delay before sending first echo request
+    sleeptime.tv_sec = send_at_startup_delay_msec / 1000;
+    sleeptime.tv_nsec = (send_at_startup_delay_msec % 1000) * 1000000;
+    r = nanosleep(&sleeptime, NULL);
+    if (r == -1)
+    {
+        logger("nanosleep error in send thread: %d\n", errno);
+    }
+
     // Set up the timespec for nanosleep
     sleeptime.tv_sec = send_interval_msec / 1000;
     sleeptime.tv_nsec = (send_interval_msec % 1000) * 1000000;
 
     while (1)
     {
-        r = nanosleep(&sleeptime, NULL);
-        if (r == -1)
-        {
-            logger("nanosleep error in send thread: %d\n", errno);
-        }
-
         // Set sequence number and checksum
         echo_request->sequence = htons(next_sequence);
         echo_request->cksum = 0;
@@ -358,6 +364,12 @@ send_thread(
 
         next_slot = (next_slot + 1) % array_size;
         next_sequence = (next_sequence + 1) % sequence_limit;
+
+        r = nanosleep(&sleeptime, NULL);
+        if (r == -1)
+        {
+            logger("nanosleep error in send thread: %d\n", errno);
+        }
     }
 }
 
@@ -824,13 +836,14 @@ static void
 usage(void)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-B bind_addr] [-F send_at_startup_delay] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -f run in foreground\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
     fprintf(stderr, "    -S log warnings via syslog\n");
     fprintf(stderr, "    -P priority scheduling for receive thread (requires root)\n");
     fprintf(stderr, "    -B bind (source) address\n");
+    fprintf(stderr, "    -F time before sending the first echo request at startup (default 0ms)\n");
     fprintf(stderr, "    -s time interval between echo requests (default 500ms)\n");
     fprintf(stderr, "    -l time interval before packets are treated as lost (default 4x send interval)\n");
     fprintf(stderr, "    -t time period over which results are averaged (default 60s)\n");
@@ -895,7 +908,7 @@ parse_args(
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "fRSPB:s:l:t:r:d:o:A:D:L:C:i:u:p:")) != -1)
+    while((opt = getopt(argc, argv, "fRSPB:F:s:l:t:r:d:o:A:D:L:C:i:u:p:")) != -1)
     {
         switch (opt)
         {
@@ -917,6 +930,14 @@ parse_args(
 
         case 'B':
             bind_arg = optarg;
+            break;
+
+        case 'F':
+            r = get_time_arg_msec(optarg, &send_at_startup_delay_msec);
+            if (r)
+            {
+                fatal("invalid send at startup delay %s\n", optarg);
+            }
             break;
 
         case 's':
