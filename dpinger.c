@@ -1,6 +1,6 @@
 
 //
-// Copyright (c) 2015-2016, Denny Page
+// Copyright (c) 2015-2017, Denny Page
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -27,6 +27,11 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
 
+
+// Silly that this is required for accept4 on Linux
+#define _GNU_SOURCE
+
+
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
@@ -51,17 +56,6 @@
 
 #include <pthread.h>
 #include <syslog.h>
-
-// TODO:
-//
-// After December 31st, 2016, review use of fcntl() for setting non blocking
-// and close on exec. It would be preferable to use accept4(), SOCK_CLOEXEC
-// and SOCK_NONBLOCK. These are currently avoided to allow use on older
-// systems such as FreeBSD 9.3, Linux 2.6.26.
-// For Linux accept4() currently requires defining _GNU_SOURCE which we would
-// like to avoid.
-// For FreeBSD, these definitions were introduced with FreeBSD 10.0 and are
-// not present in 9.3 which is supported through 2016.
 
 
 // Who we are
@@ -688,9 +682,14 @@ usocket_thread(
 
     while (1)
     {
+#if defined(DISABLE_ACCEPT4)
+        // Legacy
         sock_fd = accept(usocket_fd, NULL, NULL);
         (void) fcntl(sock_fd, F_SETFL, FD_CLOEXEC);
         (void) fcntl(sock_fd, F_SETFL, fcntl(sock_fd, F_GETFL, 0) | O_NONBLOCK);
+#else
+        sock_fd = accept4(usocket_fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+#endif
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
