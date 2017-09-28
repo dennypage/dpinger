@@ -186,6 +186,8 @@ static uint16_t                 echo_id;
 static uint16_t                 next_sequence = 0;
 static uint16_t                 sequence_limit;
 
+// Receive thread ready
+static unsigned int             recv_ready = 0;
 
 //
 // Termination handler
@@ -328,18 +330,23 @@ send_thread(
     echo_request->code = 0;
     echo_request->id = echo_id;
 
+    // Give the recv thread a moment to initialize
+    sleeptime.tv_sec = 0;
+    sleeptime.tv_nsec = 10000; // 10us
+    do {
+        r = nanosleep(&sleeptime, NULL);
+        if (r == -1)
+        {
+            logger("nanosleep error in send thread waiting for recv thread: %d\n", errno);
+        }
+    } while (recv_ready == 0);
+
     // Set up the timespec for nanosleep
     sleeptime.tv_sec = send_interval_msec / 1000;
     sleeptime.tv_nsec = (send_interval_msec % 1000) * 1000000;
 
     while (1)
     {
-        r = nanosleep(&sleeptime, NULL);
-        if (r == -1)
-        {
-            logger("nanosleep error in send thread: %d\n", errno);
-        }
-
         // Set sequence number and checksum
         echo_request->sequence = htons(next_sequence);
         echo_request->cksum = 0;
@@ -358,6 +365,12 @@ send_thread(
 
         next_slot = (next_slot + 1) % array_size;
         next_sequence = (next_sequence + 1) % sequence_limit;
+
+        r = nanosleep(&sleeptime, NULL);
+        if (r == -1)
+        {
+            logger("nanosleep error in send thread: %d\n", errno);
+        }
     }
 }
 
@@ -377,6 +390,9 @@ recv_thread(
     icmphdr_t *                 icmp;
     struct timespec             now;
     unsigned int                array_slot;
+
+    // Thread startup complete
+    recv_ready = 1;
 
     while (1)
     {
