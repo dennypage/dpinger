@@ -48,6 +48,7 @@
 #include <net/if.h>
 #include <sys/un.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
@@ -1145,10 +1146,13 @@ main(
     char                        *argv[])
 {
     char                        bind_str[ADDR_STR_MAX] = "(none)";
+    char                        pidbuf[64];
     int                         pidfile_fd = -1;
+    pid_t                       pid;
     pthread_t                   thread;
     struct                      sigaction act;
     int                         buflen = PACKET_BUFLEN;
+    ssize_t                     len;
     ssize_t                     rs;
     int                         r;
 
@@ -1194,6 +1198,66 @@ main(
     // Drop privileges
     (void) setgid(getgid());
     (void) setuid(getuid());
+
+    // Create pid file
+    if (pidfile_name)
+    {
+        pidfile_fd = open(pidfile_name, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+        if (pidfile_fd != -1)
+        {
+            // Lock the pid file
+            r = flock(pidfile_fd, LOCK_EX | LOCK_NB);
+            if (r == -1)
+            {
+                perror("flock");
+                fatal("error locking pid file\n");
+            }
+        }
+        else
+        {
+            // Pid file already exists?
+            pidfile_fd = open(pidfile_name, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+            if (pidfile_fd == -1)
+            {
+                perror("open");
+                fatal("cannot create/open pid file %s\n", pidfile_name);
+            }
+
+            // Lock the pid file
+            r = flock(pidfile_fd, LOCK_EX | LOCK_NB);
+            if (r == -1)
+            {
+                fatal("pid file %s is in use by another process\n", pidfile_name);
+            }
+
+            // Check for existing pid
+            rs = read(pidfile_fd, pidbuf, sizeof(pidbuf) - 1);
+            if (rs > 0)
+            {
+                pidbuf[rs] = 0;
+
+                pid = (pid_t) strtol(pidbuf, NULL, 10);
+                if (pid > 0)
+                {
+                    // Is the pid still alive?
+                    r = kill(pid, 0);
+                    if (r == 0)
+                    {
+                        fatal("pid file %s is in use by process %u\n", pidfile_name, (unsigned int) pid);
+                    }
+                }
+            }
+
+            // Reset the pid file
+            (void) lseek(pidfile_fd, 0, 0);
+            r = ftruncate(pidfile_fd, 0);
+            if (r == -1)
+            {
+                perror("ftruncate");
+                fatal("cannot write pid file %s\n", pidfile_name);
+            }
+        }
+    }
 
     // Create report file
     if (report_name)
@@ -1254,31 +1318,20 @@ main(
         }
     }
 
-    // Create pid file
-    if (pidfile_name)
-    {
-        pidfile_fd = open(pidfile_name, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-        if (pidfile_fd == -1)
-        {
-            perror("open");
-            fatal("cannot open/create pid file %s\n", pidfile_name);
-        }
-    }
-
     // End of general errors from command line options
 
     // Self background
     if (foreground == 0)
     {
-        r = fork();
+        pid = fork();
 
-        if (r == -1)
+        if (pid == -1)
         {
             perror("fork");
             fatal("cannot background\n");
         }
 
-        if (r)
+        if (pid)
         {
             _exit(EXIT_SUCCESS);
         }
@@ -1295,16 +1348,13 @@ main(
     // Write pid file
     if (pidfile_fd != -1)
     {
-        char                    buf[64];
-        ssize_t                 len;
-
-        len = snprintf(buf, sizeof(buf), "%u\n", (unsigned) getpid());
-        if (len < 0 || (size_t) len > sizeof(buf))
+        len = snprintf(pidbuf, sizeof(pidbuf), "%u\n", (unsigned) getpid());
+        if (len < 0 || (size_t) len > sizeof(pidbuf))
         {
             fatal("error formatting pidfile\n");
         }
 
-        rs = write(pidfile_fd, buf, (size_t) len);
+        rs = write(pidfile_fd, pidbuf, (size_t) len);
         if (rs == -1)
         {
             perror("write");
