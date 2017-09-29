@@ -760,7 +760,7 @@ get_time_arg_msec(
     }
 
     // Invalid specification?
-    if (t <= 0 || *suffix != 0)
+    if (t < 0 || *suffix != 0)
     {
         return 1;
     }
@@ -788,7 +788,7 @@ get_percent_arg(
     }
 
     // Invalid specification?
-    if (t <= 0 || t > 100 || *suffix != 0)
+    if (t < 0 || t > 100 || *suffix != 0)
     {
         return 1;
     }
@@ -937,7 +937,7 @@ parse_args(
 
         case 's':
             r = get_time_arg_msec(optarg, &send_interval_msec);
-            if (r)
+            if (r || send_interval_msec == 0)
             {
                 fatal("invalid send interval %s\n", optarg);
             }
@@ -945,7 +945,7 @@ parse_args(
 
         case 'l':
             r = get_time_arg_msec(optarg, &loss_interval_msec);
-            if (r)
+            if (r || loss_interval_msec == 0)
             {
                 fatal("invalid loss interval %s\n", optarg);
             }
@@ -953,7 +953,7 @@ parse_args(
 
         case 't':
             r = get_time_arg_msec(optarg, &time_period_msec);
-            if (r)
+            if (r || time_period_msec == 0)
             {
                 fatal("invalid averaging time period %s\n", optarg);
             }
@@ -981,7 +981,7 @@ parse_args(
 
         case 'A':
             r = get_time_arg_msec(optarg, &alert_interval_msec);
-            if (r)
+            if (r || alert_interval_msec == 0)
             {
                 fatal("invalid alert interval %s\n", optarg);
             }
