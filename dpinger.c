@@ -313,6 +313,16 @@ ts_elapsed_usec(
 
 
 //
+// convert microseconds to milliseconds
+//
+static float
+usec_to_ms( int usec )
+{
+    return (float) usec / 1000;
+}
+
+
+//
 // Send thread
 //
 __attribute__ ((noreturn))
@@ -595,6 +605,8 @@ alert_thread(
     unsigned int                alert = 0;
     unsigned int                alarm_on;
     int                         r;
+    float                       average_latency_usec_in_ms = 0;
+    float                       latency_deviation_in_ms = 0;
 
     // Set up the timespec for nanosleep
     sleeptime.tv_sec = alert_interval_msec / 1000;
@@ -657,7 +669,10 @@ alert_thread(
             alert = 0;
 
             alarm_on = latency_alarm_decay || loss_alarm_decay;
-            logger("%s%s: %s latency %luus stddev %luus loss %lu%%\n", identifier, dest_str, alarm_on ? "Alarm" : "Clear", average_latency_usec, latency_deviation, average_loss_percent);
+            average_latency_usec_in_ms = usec_to_ms(average_latency_usec);
+            latency_deviation_in_ms = usec_to_ms(latency_deviation);
+
+            logger("%s%s: %s latency %.3fms stddev %.3fms loss %lu%%\n", identifier, dest_str, alarm_on ? "Alarm" : "Clear", average_latency_usec_in_ms, latency_deviation_in_ms, average_loss_percent);
 
             if (alert_cmd)
             {
