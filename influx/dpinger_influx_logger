@@ -1,0 +1,70 @@
+#!/usr/bin/python
+
+dpinger_path = "/usr/local/bin/dpinger"
+
+import os
+import sys
+import signal
+import requests
+from subprocess import Popen, PIPE
+from requests import post
+
+# Handle SIGINT
+def signal_handler(signal, frame):
+    try:
+        dpinger.kill()
+    except:
+        pass
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+
+# Handle command line ars
+progname = sys.argv.pop(0)
+if (len(sys.argv) < 4):
+    print('Usage: {0} influx_url influx_db host name target [additional dpinger options]'.format(progname))
+    print('  influx_url  URL of the Influx server')
+    print('  influx_db   name of the Influx database')
+    print('  host        value of "host" tag (example: output of hostname command)')
+    print('  name        value of "name" tag (example: a circuit name such as "wan")')
+    print('  target      IP address to monitor (also the value of the "target" tag)')
+    sys.exit(1)
+influx_url = sys.argv.pop(0)
+influx_db = sys.argv.pop(0)
+host = sys.argv.pop(0)
+name = sys.argv.pop(0)
+target = sys.argv.pop(0)
+
+influx_user = os.getenv('INFLUX_USER')
+influx_pass = os.getenv('INFLUX_PASS')
+
+# Set up dpinger command
+cmd = [dpinger_path, "-f"]
+cmd.extend(sys.argv)
+cmd.extend(["-s", "1s", "-t", "60s", "-r", "10s", target])
+
+# Set up formats
+url = '{0}/write?db={1}'.format(influx_url, influx_db)
+datafmt = "dpinger,host={0},name={1},target={2} latency={{0:.3f}},stddev={{1:.3f}},loss={{2}}i".format(host, name, target)
+
+# Start up dpinger
+try:
+    dpinger = Popen(cmd, stdout=PIPE, text=True, bufsize=0)
+except:
+    print("failed to start dpinger")
+    sys.exit(1)
+
+# Start the show
+while True:
+    line = dpinger.stdout.readline()
+    if (len(line) == 0):
+        print("dpinger exited")
+        sys.exit(1)
+
+    [latency, stddev, loss] = line.split()
+    data = datafmt.format(float(latency) / 1000, float(stddev) / 1000, loss)
+    #print(data)
+    try:
+        post(url = url, auth = (influx_user, influx_pass), data = data)
+    except:
+        print("post failed")
