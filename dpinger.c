@@ -31,6 +31,10 @@
 // Silly that this is required for accept4 on Linux
 #define _GNU_SOURCE
 
+// Accept4 seems to be linux specific
+#ifndef __linux__
+    #define DISABLE_ACCEPT4
+#endif
 
 #include <stdio.h>
 #include <errno.h>
@@ -104,8 +108,12 @@ static unsigned long            loss_alarm_threshold_percent = 0;
 static char *                   alert_cmd = NULL;
 static size_t                   alert_cmd_offset;
 
-// Number of periods to wait to declare an alarm as cleared
-#define ALARM_DECAY_PERIODS     10
+// Max number of periods to wait to declare an alarm as cleared
+
+#define MAX_ALARM_DECAY_PERIODS    1000
+
+// This hysteresis value should be a command line option. It's quite useful.
+static unsigned long alarm_decay_periods = 10;
 
 // Report file
 static const char *             report_name = NULL;
@@ -622,7 +630,7 @@ alert_thread(
                     alert = 1;
                 }
 
-                latency_alarm_decay = ALARM_DECAY_PERIODS;
+                latency_alarm_decay = alarm_decay_periods;
             }
             else if (latency_alarm_decay)
             {
@@ -643,7 +651,7 @@ alert_thread(
                     alert = 1;
                 }
 
-                loss_alarm_decay = ALARM_DECAY_PERIODS;
+                loss_alarm_decay = alarm_decay_periods;
             }
             else if (loss_alarm_decay)
             {
@@ -845,7 +853,7 @@ usage(void)
 {
     fprintf(stderr, "Dpinger version 3.2\n\n");
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] [-y decay_periods] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -f run in foreground\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
@@ -864,7 +872,8 @@ usage(void)
     fprintf(stderr, "    -C optional command to be invoked via system() for alerts\n");
     fprintf(stderr, "    -i identifier text to include in output\n");
     fprintf(stderr, "    -u unix socket name for polling\n");
-    fprintf(stderr, "    -p process id file name\n\n");
+    fprintf(stderr, "    -p process id file name\n");
+    fprintf(stderr, "    -y alarm decay periods (default 10)\n\n");
     fprintf(stderr, "  notes:\n");
     fprintf(stderr, "    IP addresses can be in either IPv4 or IPv6 format\n\n");
     fprintf(stderr, "    time values can be expressed with a suffix of 'm' (milliseconds) or 's' (seconds)\n");
@@ -875,7 +884,7 @@ usage(void)
     fprintf(stderr, "    resolution of loss calculation is: 100 * send_interval / (time_period - loss_interval)\n\n");
     fprintf(stderr, "    the alert_cmd is invoked as \"alert_cmd dest_addr alarm_flag latency_avg loss_avg\"\n");
     fprintf(stderr, "    alarm_flag is set to 1 if either latency or loss is in alarm state\n");
-    fprintf(stderr, "    alarm_flag will return to 0 when both have have cleared alarm state\n\n");
+    fprintf(stderr, "    alarm_flag will return to 0 when both have have cleared alarm state after decay_periods\n\n");
 }
 
 
@@ -916,7 +925,7 @@ parse_args(
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "fRSPB:s:l:t:r:d:o:A:D:L:C:i:u:p:")) != -1)
+    while((opt = getopt(argc, argv, "fRSPB:s:l:t:r:d:o:A:D:L:C:i:u:p:y:")) != -1)
     {
         switch (opt)
         {
@@ -934,6 +943,13 @@ parse_args(
 
         case 'P':
             flag_priority = 1;
+            break;
+
+        case 'y':
+            alarm_decay_periods = (int)strtol(optarg, (char **)NULL, 10);
+            if (alarm_decay_periods == 0 || alarm_decay_periods > MAX_ALARM_DECAY_PERIODS) {
+               fatal ("Invalid decay period \"%s\"",optarg);
+            }
             break;
 
         case 'B':
