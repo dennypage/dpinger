@@ -1,6 +1,6 @@
 
 //
-// Copyright (c) 2015-2022, Denny Page
+// Copyright (c) 2015-2023, Denny Page
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -104,8 +104,9 @@ static unsigned long            loss_alarm_threshold_percent = 0;
 static char *                   alert_cmd = NULL;
 static size_t                   alert_cmd_offset;
 
-// Number of periods to wait to declare an alarm as cleared
-#define ALARM_DECAY_PERIODS     10
+// Interval before an alarm is cleared (hold time)
+static unsigned long            alarm_hold_msec = 0;
+#define DEFAULT_HOLD_PERIODS    10
 
 // Report file
 static const char *             report_name = NULL;
@@ -593,6 +594,7 @@ alert_thread(
     unsigned long               average_latency_usec;
     unsigned long               latency_deviation;
     unsigned long               average_loss_percent;
+    unsigned int                alarm_hold_periods;
     unsigned int                latency_alarm_decay = 0;
     unsigned int                loss_alarm_decay = 0;
     unsigned int                alert = 0;
@@ -602,6 +604,9 @@ alert_thread(
     // Set up the timespec for nanosleep
     sleeptime.tv_sec = alert_interval_msec / 1000;
     sleeptime.tv_nsec = (alert_interval_msec % 1000) * 1000000;
+
+    // Set number of alarm hold periods
+    alarm_hold_periods = (alarm_hold_msec + alert_interval_msec - 1) / alert_interval_msec;
 
     while (1)
     {
@@ -622,7 +627,7 @@ alert_thread(
                     alert = 1;
                 }
 
-                latency_alarm_decay = ALARM_DECAY_PERIODS;
+                latency_alarm_decay = alarm_hold_periods;
             }
             else if (latency_alarm_decay)
             {
@@ -643,7 +648,7 @@ alert_thread(
                     alert = 1;
                 }
 
-                loss_alarm_decay = ALARM_DECAY_PERIODS;
+                loss_alarm_decay = alarm_hold_periods;
             }
             else if (loss_alarm_decay)
             {
@@ -845,7 +850,7 @@ usage(void)
 {
     fprintf(stderr, "Dpinger version 3.2\n\n");
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-H hold_interval] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -f run in foreground\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
@@ -861,6 +866,7 @@ usage(void)
     fprintf(stderr, "    -A time interval between alerts (default 1s)\n");
     fprintf(stderr, "    -D time threshold for latency alarm (default none)\n");
     fprintf(stderr, "    -L percent threshold for loss alarm (default none)\n");
+    fprintf(stderr, "    -H time interval to hold an alarm before clearing it (default 10x alert interval)\n");
     fprintf(stderr, "    -C optional command to be invoked via system() for alerts\n");
     fprintf(stderr, "    -i identifier text to include in output\n");
     fprintf(stderr, "    -u unix socket name for polling\n");
@@ -875,7 +881,8 @@ usage(void)
     fprintf(stderr, "    resolution of loss calculation is: 100 * send_interval / (time_period - loss_interval)\n\n");
     fprintf(stderr, "    the alert_cmd is invoked as \"alert_cmd dest_addr alarm_flag latency_avg loss_avg\"\n");
     fprintf(stderr, "    alarm_flag is set to 1 if either latency or loss is in alarm state\n");
-    fprintf(stderr, "    alarm_flag will return to 0 when both have have cleared alarm state\n\n");
+    fprintf(stderr, "    alarm_flag will return to 0 when both have have cleared alarm state\n");
+    fprintf(stderr, "    alarm hold time begins when the source of the alarm retruns to normal\n\n");
 }
 
 
@@ -916,7 +923,7 @@ parse_args(
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "fRSPB:s:l:t:r:d:o:A:D:L:C:i:u:p:")) != -1)
+    while((opt = getopt(argc, argv, "fRSPB:s:l:t:r:d:o:A:D:L:H:C:i:u:p:")) != -1)
     {
         switch (opt)
         {
@@ -1006,6 +1013,14 @@ parse_args(
             if (r)
             {
                 fatal("invalid loss alarm threshold %s\n", optarg);
+            }
+            break;
+
+        case 'H':
+            r = get_time_arg_msec(optarg, &alarm_hold_msec);
+            if (r)
+            {
+                fatal("invalid alarm hold interval %s\n", optarg);
             }
             break;
 
@@ -1403,6 +1418,12 @@ main(
         fatal("getnameinfo of destination address failed\n");
     }
 
+    // Default alarm hold if not explicitly set
+    if (alarm_hold_msec == 0)
+    {
+        alarm_hold_msec = alert_interval_msec * DEFAULT_HOLD_PERIODS;
+    }
+
     if (bind_addr_len)
     {
         r = getnameinfo((struct sockaddr *) &bind_addr, bind_addr_len, bind_str, sizeof(bind_str), NULL, 0, NI_NUMERICHOST);
@@ -1412,9 +1433,9 @@ main(
         }
     }
 
-    logger("send_interval %lums  loss_interval %lums  time_period %lums  report_interval %lums  data_len %lu  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  dest_addr %s  bind_addr %s  identifier \"%s\"\n",
+    logger("send_interval %lums  loss_interval %lums  time_period %lums  report_interval %lums  data_len %lu  alert_interval %lums  latency_alarm %lums  loss_alarm %lu%%  alarm_hold %lums  dest_addr %s  bind_addr %s  identifier \"%s\"\n",
            send_interval_msec, loss_interval_msec, time_period_msec, report_interval_msec, echo_data_len,
-           alert_interval_msec, latency_alarm_threshold_msec, loss_alarm_threshold_percent,
+           alert_interval_msec, latency_alarm_threshold_msec, loss_alarm_threshold_percent, alarm_hold_msec,
            dest_str, bind_str, identifier);
 
     // Set my echo id
