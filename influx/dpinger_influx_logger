@@ -41,7 +41,7 @@ influx_pass = os.getenv('INFLUX_PASS')
 # Set up dpinger command
 cmd = [dpinger_path, "-f"]
 cmd.extend(sys.argv)
-cmd.extend(["-s", "1s", "-t", "60s", "-r", "10s", target])
+cmd.extend(["-r", "10s", target])
 
 # Set up formats
 url = '{0}/write?db={1}'.format(influx_url, influx_db)
