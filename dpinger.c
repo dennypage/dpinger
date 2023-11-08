@@ -606,7 +606,7 @@ alert_thread(
     sleeptime.tv_nsec = (alert_interval_msec % 1000) * 1000000;
 
     // Set number of alarm hold periods
-    alarm_hold_periods = (alarm_hold_msec + alert_interval_msec - 1) / alert_interval_msec;
+    alarm_hold_periods = (unsigned int) ((alarm_hold_msec + alert_interval_msec - 1) / alert_interval_msec);
 
     while (1)
     {
