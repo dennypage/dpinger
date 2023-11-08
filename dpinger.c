@@ -878,7 +878,7 @@ usage(void)
     fprintf(stderr, "    the output format is \"latency_avg latency_stddev loss_pct\"\n");
     fprintf(stderr, "    latency values are output in microseconds\n");
     fprintf(stderr, "    loss percentage is reported in whole numbers of 0-100\n");
-    fprintf(stderr, "    resolution of loss calculation is: 100 * send_interval / (time_period - loss_interval)\n\n");
+    fprintf(stderr, "    resolution of loss calculation is: 100 / ((time_period - loss_interval) / send_interval)\n\n");
     fprintf(stderr, "    the alert_cmd is invoked as \"alert_cmd dest_addr alarm_flag latency_avg latency_stddev loss_pct\"\n");
     fprintf(stderr, "    alarm_flag is set to 1 if either latency or loss is in alarm state\n");
     fprintf(stderr, "    alarm_flag will return to 0 when both have have cleared alarm state\n");
