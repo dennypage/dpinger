@@ -63,10 +63,10 @@
 static const char *             progname;
 
 // Process ID file
-static unsigned int             foreground = 0;
 static const char *             pidfile_name = NULL;
 
 // Flags
+static unsigned int             foreground = 0;
 static unsigned int             flag_rewind = 0;
 static unsigned int             flag_syslog = 0;
 static unsigned int             flag_priority = 0;
