@@ -850,12 +850,13 @@ usage(void)
 {
     fprintf(stderr, "Dpinger version 3.3\n\n");
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-H hold_interval] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-h] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-H hold_interval] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -f run in foreground\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
     fprintf(stderr, "    -S log warnings via syslog\n");
     fprintf(stderr, "    -P priority scheduling for receive thread (requires root)\n");
+    fprintf(stderr, "    -h display usage\n");
     fprintf(stderr, "    -B bind (source) address\n");
     fprintf(stderr, "    -s time interval between echo requests (default 500ms)\n");
     fprintf(stderr, "    -l time interval before packets are treated as lost (default 4x send interval)\n");
@@ -923,7 +924,7 @@ parse_args(
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "fRSPB:s:l:t:r:d:o:A:D:L:H:C:i:u:p:")) != -1)
+    while((opt = getopt(argc, argv, "fhRSPB:s:l:t:r:d:o:A:D:L:H:C:i:u:p:")) != -1)
     {
         switch (opt)
         {
@@ -1054,6 +1055,7 @@ parse_args(
             pidfile_name = optarg;
             break;
 
+        case 'h':
         default:
             usage();
             exit(EXIT_FAILURE);
@@ -1314,7 +1316,7 @@ main(
 
         memset(&uaddr, 0, sizeof(uaddr));
         uaddr.sun_family = AF_UNIX;
-        strcpy(uaddr.sun_path, usocket_name);
+        strncpy(uaddr.sun_path, usocket_name, sizeof(uaddr.sun_path));
         r = bind(usocket_fd, (struct sockaddr *) &uaddr, sizeof(uaddr));
         if (r == -1)
         {
