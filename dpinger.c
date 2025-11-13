@@ -70,6 +70,10 @@ static unsigned int             foreground = 0;
 static unsigned int             flag_rewind = 0;
 static unsigned int             flag_syslog = 0;
 static unsigned int             flag_priority = 0;
+static unsigned int             flag_timestamp = 0;
+
+// Timestamp format string
+static char *                   timestamp_format = NULL;
 
 // String representation of target
 #define ADDR_STR_MAX            (INET6_ADDRSTRLEN + IF_NAMESIZE + 1)
@@ -213,6 +217,61 @@ logger(
         vfprintf(stderr, format, args);
     }
     va_end(args);
+}
+
+
+//
+// Format timestamp for output
+//
+static void
+format_timestamp(
+    char *                      buf,
+    size_t                      bufsize)
+{
+    struct timespec             ts;
+    struct tm *                 tm;
+    char                        temp_buf[64];
+
+    if (clock_gettime(CLOCK_REALTIME, &ts) == -1)
+    {
+        logger("clock_gettime error: %d\n", errno);
+        buf[0] = '\0';
+        return;
+    }
+
+    tm = localtime(&ts.tv_sec);
+    if (!tm)
+    {
+        logger("localtime error: %d\n", errno);
+        buf[0] = '\0';
+        return;
+    }
+
+    if (timestamp_format)
+    {
+        if (strftime(buf, bufsize, timestamp_format, tm) == 0)
+        {
+            logger("strftime error: format too long\n");
+            buf[0] = '\0';
+        }
+    }
+    else
+    {
+        char tz_buf[32];
+        if (strftime(temp_buf, sizeof(temp_buf), "%Y-%m-%dT%H:%M:%S", tm) == 0)
+        {
+            logger("strftime error: default format too long\n");
+            buf[0] = '\0';
+            return;
+        }
+        if (strftime(tz_buf, sizeof(tz_buf), "%z", tm) == 0)
+        {
+            logger("strftime error: timezone format too long\n");
+            buf[0] = '\0';
+            return;
+        }
+        snprintf(buf, bufsize, "%s.%03ld%s", temp_buf, ts.tv_nsec / 1000000, tz_buf);
+    }
 }
 
 
@@ -556,7 +615,16 @@ report_thread(
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
-        len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
+        if (flag_timestamp)
+        {
+            char timestamp_buf[64];
+            format_timestamp(timestamp_buf, sizeof(timestamp_buf));
+            len = snprintf(buf, sizeof(buf), "%s %s%lu %lu %lu\n", timestamp_buf, identifier, average_latency_usec, latency_deviation, average_loss_percent);
+        }
+        else
+        {
+            len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
+        }
         if (len < 0 || (size_t) len > sizeof(buf))
         {
             logger("error formatting output in report thread\n");
@@ -718,7 +786,16 @@ usocket_thread(
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
-        len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
+        if (flag_timestamp)
+        {
+            char timestamp_buf[64];
+            format_timestamp(timestamp_buf, sizeof(timestamp_buf));
+            len = snprintf(buf, sizeof(buf), "%s %s%lu %lu %lu\n", timestamp_buf, identifier, average_latency_usec, latency_deviation, average_loss_percent);
+        }
+        else
+        {
+            len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
+        }
         if (len < 0 || (size_t) len > sizeof(buf))
         {
             logger("error formatting output in usocket thread\n");
@@ -850,13 +927,16 @@ usage(void)
 {
     fprintf(stderr, "Dpinger version 3.3\n\n");
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-h] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-H hold_interval] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
+    fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-h] [-T] [-F format] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-H hold_interval] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
     fprintf(stderr, "    -f run in foreground\n");
     fprintf(stderr, "    -R rewind output file between reports\n");
     fprintf(stderr, "    -S log warnings via syslog\n");
     fprintf(stderr, "    -P priority scheduling for receive thread (requires root)\n");
     fprintf(stderr, "    -h display usage\n");
+    fprintf(stderr, "    -T add ISO8601 timestamps with local timezone (YYYY-MM-DDTHH:MM:SS.sss±ZZZZ)\n");
+    fprintf(stderr, "    -F timestamp format string (strftime compatible, enables -T)\n");
+    fprintf(stderr, "       see strftime(3) for format specifiers, can include custom identifiers\n");
     fprintf(stderr, "    -B bind (source) address\n");
     fprintf(stderr, "    -s time interval between echo requests (default 500ms)\n");
     fprintf(stderr, "    -l time interval before packets are treated as lost (default 4x send interval)\n");
@@ -878,7 +958,16 @@ usage(void)
     fprintf(stderr, "    if no suffix is specified, milliseconds is the default\n\n");
     fprintf(stderr, "    the output format is \"latency_avg latency_stddev loss_pct\"\n");
     fprintf(stderr, "    latency values are output in microseconds\n");
-    fprintf(stderr, "    loss percentage is reported in whole numbers of 0-100\n");
+    fprintf(stderr, "    loss percentage is reported in whole numbers of 0-100\n\n");
+    fprintf(stderr, "    timestamp format (-T uses %%Y-%%m-%%dT%%H:%%M:%%S.sss%%z):\n");
+    fprintf(stderr, "      %%Y=year %%m=month %%d=day %%H=hour %%M=min %%S=sec .sss=millisec %%z=timezone\n\n");
+    fprintf(stderr, "    timestamp examples (latency_avg_μs latency_stddev_μs loss_pct):\n");
+    fprintf(stderr, "      default: \"15420 892 0\"\n");
+    fprintf(stderr, "      with -T: \"2025-11-12T18:09:16.696-0600 15420 892 0\"\n");
+    fprintf(stderr, "      custom:  -F \"%%H:%%M:%%S\" → \"18:09:16 15420 892 0\"\n");
+    fprintf(stderr, "      w/label: -F \"WAN %%Y-%%m-%%dT%%H:%%M:%%S%%z\" → \"WAN 2025-11-12T18:09:16-0600 15420 892 0\"\n");
+    fprintf(stderr, "      id-only: -F \"SERVER1\" → \"SERVER1 15420 892 0\" (identifier without timestamp)\n\n");
+    fprintf(stderr, "    WARNING: -T and -F options modify output format and may break parsing scripts\n");
     fprintf(stderr, "    resolution of loss calculation is: 100 / ((time_period - loss_interval) / send_interval)\n\n");
     fprintf(stderr, "    the alert_cmd is invoked as \"alert_cmd dest_addr alarm_flag latency_avg latency_stddev loss_pct\"\n");
     fprintf(stderr, "    alarm_flag is set to 1 if either latency or loss is in alarm state\n");
@@ -924,7 +1013,7 @@ parse_args(
 
     progname = argv[0];
 
-    while((opt = getopt(argc, argv, "fhRSPB:s:l:t:r:d:o:A:D:L:H:C:i:u:p:")) != -1)
+    while((opt = getopt(argc, argv, "fhRSPTF:B:s:l:t:r:d:o:A:D:L:H:C:i:u:p:")) != -1)
     {
         switch (opt)
         {
@@ -942,6 +1031,19 @@ parse_args(
 
         case 'P':
             flag_priority = 1;
+            break;
+
+        case 'T':
+            flag_timestamp = 1;
+            break;
+
+        case 'F':
+            timestamp_format = strdup(optarg);
+            if (!timestamp_format)
+            {
+                fatal("memory allocation error for timestamp format\n");
+            }
+            flag_timestamp = 1;
             break;
 
         case 'B':
