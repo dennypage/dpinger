@@ -234,7 +234,7 @@ term_handler(
         (void) unlink(pidfile_name);
     }
     logger("exiting on signal %d\n", signum);
-    exit(0);
+    exit(EXIT_SUCCESS);
 }
 
 
@@ -1073,7 +1073,7 @@ parse_args(
     if (argc != optind + 1)
     {
         usage();
-        exit(EXIT_FAILURE);
+        fatal("incorrect number of parameters\n");
     }
     dest_arg = argv[optind];
 
