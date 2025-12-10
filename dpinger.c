@@ -848,7 +848,7 @@ get_length_arg(
 static void
 usage(void)
 {
-    fprintf(stderr, "Dpinger version 3.3\n\n");
+    fprintf(stderr, "Dpinger version 3.4\n\n");
     fprintf(stderr, "Usage:\n");
     fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-h] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-H hold_interval] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
@@ -899,7 +899,14 @@ fatal(
     va_list                 args;
 
     va_start(args, format);
-    vfprintf(stderr, format, args);
+    if (flag_syslog)
+    {
+        vsyslog(LOG_ERR, format, args);
+    }
+    else
+    {
+        vfprintf(stderr, format, args);
+    }
     va_end(args);
 
     exit(EXIT_FAILURE);
