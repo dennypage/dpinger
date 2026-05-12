@@ -557,7 +557,7 @@ report_thread(
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
         len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
-        if (len < 0 || (size_t) len > sizeof(buf))
+        if (len < 0 || (size_t) len >= sizeof(buf))
         {
             logger("error formatting output in report thread\n");
         }
@@ -575,7 +575,7 @@ report_thread(
         if (flag_rewind)
         {
             (void) ftruncate(report_fd, len);
-            (void) lseek(report_fd, SEEK_SET, 0);
+            (void) lseek(report_fd, 0, SEEK_SET);
         }
     }
 }
@@ -710,16 +710,21 @@ usocket_thread(
 #if defined(DISABLE_ACCEPT4)
         // Legacy
         sock_fd = accept(usocket_fd, NULL, NULL);
-        (void) fcntl(sock_fd, F_SETFL, FD_CLOEXEC);
+        (void) fcntl(sock_fd, F_SETFD, FD_CLOEXEC);
         (void) fcntl(sock_fd, F_SETFL, fcntl(sock_fd, F_GETFL, 0) | O_NONBLOCK);
 #else
         sock_fd = accept4(usocket_fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
 #endif
+        if (sock_fd == -1)
+        {
+            logger("accept error in usocket thread: %d\n", errno);
+            continue;
+        }
 
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
         len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
-        if (len < 0 || (size_t) len > sizeof(buf))
+        if (len < 0 || (size_t) len >= sizeof(buf))
         {
             logger("error formatting output in usocket thread\n");
         }
@@ -1091,9 +1096,9 @@ parse_args(
 
     // Ensure we don't have sequence space issues. This really should only be hit by
     // complete accident. Even a ratio of 16384:1 would be excessive.
-    if (time_period_msec / send_interval_msec > 65536)
+    if (time_period_msec / send_interval_msec > 65535)
     {
-        fatal("the ratio of time period to send interval cannot exceed 65536:1\n");
+        fatal("the ratio of time period to send interval cannot exceed 65535:1\n");
     }
 
     // Check destination address
@@ -1194,7 +1199,7 @@ main(
         perror("socket");
         fatal("cannot create send socket\n");
     }
-    (void) fcntl(send_sock, F_SETFL, FD_CLOEXEC);
+    (void) fcntl(send_sock, F_SETFD, FD_CLOEXEC);
     (void) setsockopt(send_sock, SOL_SOCKET, SO_SNDBUF, &buflen, sizeof(buflen));
 
     recv_sock = socket(af_family, SOCK_RAW, ip_proto);
@@ -1203,7 +1208,7 @@ main(
         perror("socket");
         fatal("cannot create recv socket\n");
     }
-    (void) fcntl(recv_sock, F_SETFL, FD_CLOEXEC);
+    (void) fcntl(recv_sock, F_SETFD, FD_CLOEXEC);
     (void) setsockopt(recv_sock, SOL_SOCKET, SO_RCVBUF, &buflen, sizeof(buflen));
 
     // Bind our sockets to an address if requested
@@ -1277,7 +1282,7 @@ main(
             }
 
             // Reset the pid file
-            (void) lseek(pidfile_fd, 0, 0);
+            (void) lseek(pidfile_fd, 0, SEEK_SET);
             r = ftruncate(pidfile_fd, 0);
             if (r == -1)
             {
@@ -1318,7 +1323,7 @@ main(
             perror("socket");
             fatal("cannot create unix domain socket\n");
         }
-        (void) fcntl(usocket_fd, F_SETFL, FD_CLOEXEC);
+        (void) fcntl(usocket_fd, F_SETFD, FD_CLOEXEC);
         (void) unlink(usocket_name);
 
         memset(&uaddr, 0, sizeof(uaddr));
@@ -1377,7 +1382,7 @@ main(
     if (pidfile_fd != -1)
     {
         len = snprintf(pidbuf, sizeof(pidbuf), "%u\n", (unsigned) getpid());
-        if (len < 0 || (size_t) len > sizeof(pidbuf))
+        if (len < 0 || (size_t) len >= sizeof(pidbuf))
         {
             fatal("error formatting pidfile\n");
         }
