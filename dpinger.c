@@ -28,8 +28,11 @@
 //
 
 
-// Silly that this is required for accept4 on Linux
-#define _GNU_SOURCE
+#if defined (__APPLE__)
+# define DISABLE_ACCEPT4
+#else
+# define _GNU_SOURCE    // Silly that this is required for accept4 on Linux
+#endif
 
 
 #include <stdio.h>
@@ -117,6 +120,10 @@ static const char *             usocket_name = NULL;
 static int                      usocket_fd;
 
 static char                     identifier[64] = "\0";
+
+// Termination handling
+static volatile sig_atomic_t term_pending = 0;
+static volatile sig_atomic_t term_signum = 0;
 
 // Length of maximum output (dest_str alarm_flag average_latency_usec latency_deviation average_loss_percent)
 #define OUTPUT_MAX              (sizeof(identifier) + sizeof(dest_str) + sizeof(" 1 999999999999 999999999999 100\0"))
@@ -219,22 +226,15 @@ logger(
 //
 // Termination handler
 //
-__attribute__ ((noreturn))
 static void
 term_handler(
     int                         signum)
 {
-    // NB: This function may be simultaneously invoked by multiple threads
-    if (usocket_name)
+    if (term_pending == 0)
     {
-        (void) unlink(usocket_name);
+        term_pending = 1;
+        term_signum = signum;
     }
-    if (pidfile_name)
-    {
-        (void) unlink(pidfile_name);
-    }
-    logger("exiting on signal %d\n", signum);
-    exit(EXIT_SUCCESS);
 }
 
 
@@ -1479,7 +1479,7 @@ main(
         if (r == -1)
         {
             perror("sched_get_priority_min");
-            fatal("cannot determin minimum shceduling priority for SCHED_RR\n");
+            fatal("cannot determine minimum shceduling priority for SCHED_RR\n");
         }
         thread_sched_param.sched_priority = r;
 
@@ -1532,9 +1532,20 @@ main(
         }
     }
 
-    // Wait (forever) for last thread started
-    pthread_join(thread, NULL);
+    // Wait (forever)
+    while (term_pending == 0)
+    {
+        pause();
+    }
 
-    // notreached
-    return 0;
+    if (usocket_name)
+    {
+        (void) unlink(usocket_name);
+    }
+    if (pidfile_name)
+    {
+        (void) unlink(pidfile_name);
+    }
+    logger("exiting on signal %d\n", term_signum);
+    exit(EXIT_SUCCESS);
 }
