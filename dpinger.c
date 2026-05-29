@@ -1546,6 +1546,6 @@ main(
     {
         (void) unlink(pidfile_name);
     }
-    logger("exiting on signal %d\n", term_signum);
+    logger("exiting on signal %d\n", (int) term_signum);
     exit(EXIT_SUCCESS);
 }
