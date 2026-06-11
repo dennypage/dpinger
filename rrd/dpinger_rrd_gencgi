@@ -8,7 +8,7 @@ fi
 rrdname="${1}"
 pngname="${2}"
 
-# Prefixes for rrd and png files. Note that if the prefix is a directory, it must incldue the trailing slash
+# Prefixes for rrd and png files. Note that if the prefix is a directory, it must include the trailing slash
 # If no value is set, the files are located in the current directory when the cgi script runs
 rrdprefix=
 pngprefix=/tmp/
