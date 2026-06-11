@@ -888,7 +888,7 @@ usage(void)
     fprintf(stderr, "    the alert_cmd is invoked as \"alert_cmd dest_addr alarm_flag latency_avg latency_stddev loss_pct\"\n");
     fprintf(stderr, "    alarm_flag is set to 1 if either latency or loss is in alarm state\n");
     fprintf(stderr, "    alarm_flag will return to 0 when both have have cleared alarm state\n");
-    fprintf(stderr, "    alarm hold time begins when the source of the alarm retruns to normal\n\n");
+    fprintf(stderr, "    alarm hold time begins when the source of the alarm returns to normal\n\n");
 }
 
 
@@ -1479,7 +1479,7 @@ main(
         if (r == -1)
         {
             perror("sched_get_priority_min");
-            fatal("cannot determine minimum shceduling priority for SCHED_RR\n");
+            fatal("cannot determine minimum scheduling priority for SCHED_RR\n");
         }
         thread_sched_param.sched_priority = r;
 
