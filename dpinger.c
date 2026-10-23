@@ -721,6 +721,14 @@ usocket_thread(
             continue;
         }
 
+#if !defined(MSG_NOSIGNAL) && defined(SO_NOSIGPIPE)
+        {
+            int                 enable = 1;
+
+            (void) setsockopt(sock_fd, SOL_SOCKET, SO_NOSIGPIPE, &enable, sizeof(enable));
+        }
+#endif
+
         report(&average_latency_usec, &latency_deviation, &average_loss_percent);
 
         len = snprintf(buf, sizeof(buf), "%s%lu %lu %lu\n", identifier, average_latency_usec, latency_deviation, average_loss_percent);
@@ -729,10 +737,17 @@ usocket_thread(
             logger("error formatting output in usocket thread\n");
         }
 
+#if defined(MSG_NOSIGNAL)
+        rs = send(sock_fd, buf, (size_t) len, MSG_NOSIGNAL);
+#else
         rs = write(sock_fd, buf, (size_t) len);
+#endif
         if (rs == -1)
         {
-            logger("write error in usocket thread: %d\n", errno);
+            if (errno != EPIPE && errno != ECONNRESET)
+            {
+                logger("write error in usocket thread: %d\n", errno);
+            }
         }
         else if (rs != len)
         {
