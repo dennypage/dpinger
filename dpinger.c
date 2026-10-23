@@ -565,6 +565,10 @@ report_thread(
         rs = write(report_fd, buf, (size_t) len);
         if (rs == -1)
         {
+            if (errno == EPIPE)
+            {
+                exit(EXIT_SUCCESS);
+            }
             logger("write error in report thread: %d\n", errno);
         }
         else if (rs != len)
@@ -732,7 +736,10 @@ usocket_thread(
         rs = write(sock_fd, buf, (size_t) len);
         if (rs == -1)
         {
-            logger("write error in usocket thread: %d\n", errno);
+            if (errno != EPIPE)
+            {
+                logger("write error in usocket thread: %d\n", errno);
+            }
         }
         else if (rs != len)
         {
@@ -853,7 +860,7 @@ get_length_arg(
 static void
 usage(void)
 {
-    fprintf(stderr, "Dpinger version 3.6\n\n");
+    fprintf(stderr, "Dpinger version 3.7\n\n");
     fprintf(stderr, "Usage:\n");
     fprintf(stderr, "  %s [-f] [-R] [-S] [-P] [-h] [-B bind_addr] [-s send_interval] [-l loss_interval] [-t time_period] [-r report_interval] [-d data_length] [-o output_file] [-A alert_interval] [-D latency_alarm] [-L loss_alarm] [-H hold_interval] [-C alert_cmd] [-i identifier] [-u usocket] [-p pidfile] dest_addr\n\n", progname);
     fprintf(stderr, "  options:\n");
@@ -1377,6 +1384,10 @@ main(
     act.sa_handler = (void (*)(int)) term_handler;
     (void) sigaction(SIGTERM, &act, NULL);
     (void) sigaction(SIGINT, &act, NULL);
+
+    // Ignore SIGPIPE
+    act.sa_handler = SIG_IGN;
+    (void) sigaction(SIGPIPE, &act, NULL);
 
     // Write pid file
     if (pidfile_fd != -1)
